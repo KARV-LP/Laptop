@@ -1,0 +1,82 @@
+name: Authorized low-risk temp cleanup safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/maintenance/Invoke-KarvAuthorizedLowRiskTempCleanup.ps1'
+      - 'tests/Test-AuthorizedLowRiskTempCleanupSafety.ps1'
+      - 'docs/fase-2c-apply-autorizado.md'
+      - '.github/workflows/authorized-low-risk-temp-cleanup-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Guarded synthetic cleanup
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate syntax guards and synthetic apply
+        shell: powershell
+        run: |
+          try {
+              .\tests\Test-AuthorizedLowRiskTempCleanupSafety.ps1 `
+                -ScriptPath '.\scripts\maintenance\Invoke-KarvAuthorizedLowRiskTempCleanup.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
+
+      - name: Validate documented Windows PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-AuthorizedLowRiskTempCleanupSafety.ps1"
+          -ScriptPath ".\scripts\maintenance\Invoke-KarvAuthorizedLowRiskTempCleanup.ps1"
+
+      - name: Confirm exact change scope
+        if: github.event_name == 'pull_request'
+        shell: powershell
+        run: |
+          $baseSha = "${{ github.event.pull_request.base.sha }}"
+          $headSha = "${{ github.event.pull_request.head.sha }}"
+          $changed = @(git diff --name-only $baseSha $headSha)
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the pull request diff.' }
+
+          $allowed = @(
+              '.github/workflows/authorized-low-risk-temp-cleanup-safety.yml',
+              'docs/fase-2c-apply-autorizado.md',
+              'scripts/maintenance/Invoke-KarvAuthorizedLowRiskTempCleanup.ps1',
+              'tests/Test-AuthorizedLowRiskTempCleanupSafety.ps1'
+          )
+
+          $unexpected = @($changed | Where-Object { $allowed -notcontains $_ })
+          if ($unexpected.Count -ne 0) {
+              throw ('Unexpected changed files: ' + ($unexpected -join '; '))
+          }
+          if ($changed.Count -ne $allowed.Count) {
+              throw ('Expected exactly four changed files, found ' + $changed.Count + '.')
+          }
+
+          Write-Host 'Change scope is restricted to the authorized cleanup implementation.'
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Safety tests changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after synthetic cleanup tests.'
