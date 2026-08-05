@@ -28,7 +28,7 @@ function Get-ValidatedCDrivePath {
         throw ($Purpose + ' does not have a valid drive root.')
     }
 
-    $pathDrive = $root.TrimEnd('\\').ToUpperInvariant()
+    $pathDrive = $root.TrimEnd('\').ToUpperInvariant()
     if ($pathDrive -eq $excludedDrive) {
         throw ($Purpose + ' cannot use the permanently excluded drive E:.')
     }
@@ -45,15 +45,15 @@ function Test-IsPathInsideRoot {
         [Parameter(Mandatory = $true)][string]$Root
     )
 
-    $normalizedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\\')
-    $normalizedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\\')
+    $normalizedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $normalizedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
 
     if ([string]::Equals($normalizedPath, $normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
 
     return $normalizedPath.StartsWith(
-        $normalizedRoot + '\\',
+        $normalizedRoot + '\',
         [System.StringComparison]::OrdinalIgnoreCase
     )
 }
@@ -115,7 +115,7 @@ if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
 }
 
 $allowedOutputRoot = Get-ValidatedCDrivePath `
-    -Path (Join-Path $env:LOCALAPPDATA 'KARV\\LaptopDiagnostics') `
+    -Path (Join-Path $env:LOCALAPPDATA 'KARV\LaptopDiagnostics') `
     -Purpose 'AllowedOutputRoot'
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -123,7 +123,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $validatedOutputDirectory = Get-ValidatedCDrivePath -Path $OutputDirectory -Purpose 'OutputDirectory'
 if (-not (Test-IsPathInsideRoot -Path $validatedOutputDirectory -Root $allowedOutputRoot)) {
-    throw 'OutputDirectory must remain inside LOCALAPPDATA\\KARV\\LaptopDiagnostics.'
+    throw 'OutputDirectory must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
 }
 
 [System.IO.Directory]::CreateDirectory($validatedOutputDirectory) | Out-Null
@@ -259,8 +259,8 @@ $registryLocations = @(
     [pscustomobject]@{ Hive = [Microsoft.Win32.RegistryHive]::LocalMachine; View = [Microsoft.Win32.RegistryView]::Registry32; Source = 'RegistryLocalMachine32'; Scope = 'LocalMachine' }
 )
 $registrySubKeys = @(
-    'Software\\Microsoft\\Windows\\CurrentVersion\\Run',
-    'Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce'
+    'Software\Microsoft\Windows\CurrentVersion\Run',
+    'Software\Microsoft\Windows\CurrentVersion\RunOnce'
 )
 
 foreach ($location in $registryLocations) {
