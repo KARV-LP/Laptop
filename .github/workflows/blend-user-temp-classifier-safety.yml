@@ -25,8 +25,17 @@ jobs:
       - name: Validate with Windows PowerShell
         shell: powershell
         run: |
-          .\tests\Test-BlendUserTempClassifierSafety.ps1 `
-            -ScriptPath '.\scripts\diagnostic\Invoke-KarvBlendUserTempClassifier.ps1'
+          try {
+              .\tests\Test-BlendUserTempClassifierSafety.ps1 `
+                -ScriptPath '.\scripts\diagnostic\Invoke-KarvBlendUserTempClassifier.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
 
       - name: Validate documented PowerShell 5.1 invocation
         shell: cmd
