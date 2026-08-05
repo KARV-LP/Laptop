@@ -13,7 +13,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$scriptVersion = '1.0.0'
+$scriptVersion = '1.0.1'
 $collectorName = 'ProtectedApplicationInventory'
 $nowUtc = [DateTime]::UtcNow
 
@@ -127,9 +127,11 @@ function Get-ProtectedFamily {
 function Read-RegistryApplications {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[object]]$Destination,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[object]]$Failures
     )
 

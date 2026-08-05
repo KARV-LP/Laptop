@@ -1,0 +1,44 @@
+name: Protected application registry runtime
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvProtectedApplicationInventory.ps1'
+      - 'tests/Test-ProtectedApplicationRegistryRuntime.ps1'
+      - '.github/workflows/protected-application-registry-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Real read-only registry path
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute real registry path with Windows PowerShell
+        shell: powershell
+        run: |
+          .\tests\Test-ProtectedApplicationRegistryRuntime.ps1 `
+            -ScriptPath '.\scripts\diagnostic\Invoke-KarvProtectedApplicationInventory.ps1'
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-ProtectedApplicationRegistryRuntime.ps1"
+          -ScriptPath ".\scripts\diagnostic\Invoke-KarvProtectedApplicationInventory.ps1"
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Runtime test changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after real registry runtime test.'
