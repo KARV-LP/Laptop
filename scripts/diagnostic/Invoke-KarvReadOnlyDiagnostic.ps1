@@ -1,5 +1,5 @@
 #requires -Version 5.1
-<#+
+<#
 .SYNOPSIS
     Generates a sanitized technical baseline for the KARV laptop.
 .DESCRIPTION
@@ -61,23 +61,37 @@ function Protect-Text {
     $replacements = @()
 
     if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
-        $replacements += [pscustomobject]@{ Pattern = [regex]::Escape($env:USERPROFILE); Replacement = '<USERPROFILE>' }
+        $replacements += [pscustomobject]@{
+            Pattern = [regex]::Escape($env:USERPROFILE)
+            Replacement = '<USERPROFILE>'
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($env:USERNAME)) {
-        $replacements += [pscustomobject]@{ Pattern = [regex]::Escape($env:USERNAME); Replacement = '<USER>' }
+        $replacements += [pscustomobject]@{
+            Pattern = [regex]::Escape($env:USERNAME)
+            Replacement = '<USER>'
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
-        $replacements += [pscustomobject]@{ Pattern = [regex]::Escape($env:COMPUTERNAME); Replacement = '<COMPUTER>' }
+        $replacements += [pscustomobject]@{
+            Pattern = [regex]::Escape($env:COMPUTERNAME)
+            Replacement = '<COMPUTER>'
+        }
     }
 
     foreach ($item in $replacements) {
-        $text = [regex]::Replace($text, $item.Pattern, $item.Replacement, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $text = [regex]::Replace(
+            $text,
+            $item.Pattern,
+            $item.Replacement,
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
     }
 
     $text = [regex]::Replace($text, '(?i)C:\\Users\\[^\\\s"'']+', 'C:\Users\<USER>')
+    $text = [regex]::Replace($text, '(?i)\bS-1-\d+(?:-\d+)+\b', '<SID>')
     $text = [regex]::Replace($text, '(?i)\b[A-F0-9]{2}(?:[:-][A-F0-9]{2}){5}\b', '<MAC>')
     $text = [regex]::Replace($text, '(?i)\b[\w.%+-]+@[\w.-]+\.[A-Z]{2,}\b', '<EMAIL>')
-    $text = [regex]::Replace($text, '(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)', '<IP>')
 
     return $text
 }
@@ -156,15 +170,18 @@ function Get-SelectedDriverInventory {
     $selectedClasses = @('DISPLAY', 'NET', 'SCSIADAPTER', 'HDC', 'SYSTEM', 'MEDIA')
 
     return @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
-        Where-Object { $_.DeviceClass -and ($selectedClasses -contains ([string]$_.DeviceClass).ToUpperInvariant()) } |
+        Where-Object {
+            $_.DeviceClass -and
+            ($selectedClasses -contains ([string]$_.DeviceClass).ToUpperInvariant())
+        } |
         ForEach-Object {
             [pscustomobject]@{
-                DeviceName     = Protect-Text $_.DeviceName
-                DeviceClass    = Protect-Text $_.DeviceClass
-                Manufacturer   = Protect-Text $_.Manufacturer
-                Provider       = Protect-Text $_.DriverProviderName
-                DriverVersion  = Protect-Text $_.DriverVersion
-                DriverDate     = $_.DriverDate
+                DeviceName    = Protect-Text $_.DeviceName
+                DeviceClass   = Protect-Text $_.DeviceClass
+                Manufacturer  = Protect-Text $_.Manufacturer
+                Provider      = Protect-Text $_.DriverProviderName
+                DriverVersion = Protect-Text $_.DriverVersion
+                DriverDate    = $_.DriverDate
             }
         } |
         Sort-Object DeviceClass, DeviceName)
@@ -186,12 +203,12 @@ function Get-EventSummary {
         ForEach-Object {
             $sample = $_.Group | Select-Object -First 1
             [pscustomobject]@{
-                LogName     = Protect-Text $sample.LogName
-                Provider    = Protect-Text $sample.ProviderName
-                EventId     = $sample.Id
-                Level       = Protect-Text $sample.LevelDisplayName
-                Count       = $_.Count
-                MostRecent  = ($_.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1).TimeCreated
+                LogName    = Protect-Text $sample.LogName
+                Provider   = Protect-Text $sample.ProviderName
+                EventId    = $sample.Id
+                Level      = Protect-Text $sample.LevelDisplayName
+                Count      = $_.Count
+                MostRecent = ($_.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1).TimeCreated
             }
         })
 }
@@ -283,8 +300,17 @@ try {
 
 try {
     $logicalDisks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' | ForEach-Object {
-        $used = if ($null -ne $_.Size -and $null -ne $_.FreeSpace) { [double]$_.Size - [double]$_.FreeSpace } else { $null }
-        $usedPercent = if ($null -ne $used -and [double]$_.Size -gt 0) { [math]::Round(($used / [double]$_.Size) * 100, 1) } else { $null }
+        $used = if ($null -ne $_.Size -and $null -ne $_.FreeSpace) {
+            [double]$_.Size - [double]$_.FreeSpace
+        } else {
+            $null
+        }
+        $usedPercent = if ($null -ne $used -and [double]$_.Size -gt 0) {
+            [math]::Round(($used / [double]$_.Size) * 100, 1)
+        } else {
+            $null
+        }
+
         [pscustomobject]@{
             Drive       = Protect-Text $_.DeviceID
             FileSystem  = Protect-Text $_.FileSystem
@@ -334,7 +360,10 @@ try {
 
 try {
     $processes = @(Get-Process |
-        Sort-Object -Property @{ Expression = { if ($null -eq $_.CPU) { 0 } else { $_.CPU } }; Descending = $true } |
+        Sort-Object -Property @{
+            Expression = { if ($null -eq $_.CPU) { 0 } else { $_.CPU } }
+            Descending = $true
+        } |
         Select-Object -First $TopProcessCount |
         ForEach-Object {
             [pscustomobject]@{
@@ -421,7 +450,7 @@ if (-not $SkipCacheScan) {
 
 $report = [ordered]@{
     SchemaVersion = '1.0.0'
-    ScriptVersion = '1.0.2'
+    ScriptVersion = '1.0.3'
     GeneratedAt   = $generatedAt
     Privacy       = [ordered]@{
         Sanitized              = $true
@@ -430,9 +459,10 @@ $report = [ordered]@{
         SerialCollected        = $false
         NetworkCollected       = $false
         EventMessagesCollected = $false
+        SidCollected           = $false
     }
     Execution = [ordered]@{
-        IsAdministrator  = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        IsAdministrator   = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         EventLookbackDays = $EventLookbackDays
         CacheScanSkipped  = [bool]$SkipCacheScan
     }
@@ -469,9 +499,9 @@ $summaryLines = New-Object System.Collections.Generic.List[string]
 $summaryLines.Add('# Diagnostico KARV - resumo sanitizado')
 $summaryLines.Add('')
 $summaryLines.Add('- Gerado em: ' + $generatedAt.ToString('yyyy-MM-dd HH:mm:ss'))
-$summaryLines.Add('- Script: 1.0.2')
+$summaryLines.Add('- Script: 1.0.3')
 $summaryLines.Add('- Secoes indisponiveis: ' + $script:SectionFailures.Count)
-$summaryLines.Add('- Relatorio sem nome do computador, usuario, serial, MAC, IP ou mensagens completas de eventos.')
+$summaryLines.Add('- Relatorio sem nome do computador, usuario, SID, serial, MAC, IP ou mensagens completas de eventos.')
 $summaryLines.Add('')
 $summaryLines.Add('## Sistema')
 if ($null -ne $computerSystem) {
