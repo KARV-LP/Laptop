@@ -262,10 +262,9 @@ try {
         if (-not (Test-IsPathInsideRoot -Path $validatedInputPath -Root $allowedOutputRoot)) {
             throw 'SyntheticInputPath must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
         }
-        $rawTasks = @(
-            [System.IO.File]::ReadAllText($validatedInputPath) |
-                ConvertFrom-Json
-        )
+
+        $parsedTasks = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($validatedInputPath))
+        $rawTasks = @($parsedTasks | ForEach-Object { $_ })
     }
     else {
         $command = Get-Command -Name 'Get-ScheduledTask' -ErrorAction Stop
