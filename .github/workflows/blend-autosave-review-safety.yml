@@ -1,0 +1,54 @@
+name: Blender autosave review safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvBlendAutosaveReview.ps1'
+      - 'tests/Test-BlendAutosaveReviewSafety.ps1'
+      - 'docs/fase-2e-blend-autosave-review.md'
+      - '.github/workflows/blend-autosave-review-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Local manifest and sanitized summary safety
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate with Windows PowerShell
+        shell: powershell
+        run: |
+          try {
+              .\tests\Test-BlendAutosaveReviewSafety.ps1 `
+                -ScriptPath '.\scripts\diagnostic\Invoke-KarvBlendAutosaveReview.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-BlendAutosaveReviewSafety.ps1"
+          -ScriptPath ".\scripts\diagnostic\Invoke-KarvBlendAutosaveReview.ps1"
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Safety tests changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after safety tests.'
