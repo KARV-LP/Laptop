@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/maintenance/Invoke-KarvLowRiskTempCleanup.ps1'
-      - 'tests/Test-DiagnosticSafety.ps1'
+      - 'tests/Test-LowRiskMaintenanceSafety.ps1'
       - '.github/workflows/low-risk-temp-cleanup-safety.yml'
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ jobs:
 
       - name: Validate script syntax and commands
         shell: cmd
-        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1" -ScriptPath ".\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1"
+        run: powershell.exe -NoProfile -File ".\tests\Test-LowRiskMaintenanceSafety.ps1" -ScriptPath ".\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1"
 
       - name: Validate preview leaves all files untouched
         shell: powershell
