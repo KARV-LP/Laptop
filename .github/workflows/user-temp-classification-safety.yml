@@ -1,0 +1,147 @@
+name: UserTemp classification safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvUserTempClassification.ps1'
+      - 'tests/Test-DiagnosticSafety.ps1'
+      - '.github/workflows/user-temp-classification-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: PowerShell safety and controlled runtime
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate collector directly
+        shell: powershell
+        run: .\tests\Test-DiagnosticSafety.ps1 -ScriptPath ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1"
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1" -ScriptPath ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1"
+
+      - name: Execute controlled smoke test
+        shell: powershell
+        run: |
+          $sampleRoot = Join-Path $env:RUNNER_TEMP 'KARV-UserTemp-Classify-Sample'
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-UserTemp-Classify-Output'
+          [System.IO.Directory]::CreateDirectory($sampleRoot) | Out-Null
+
+          $oldTemp = Join-Path $sampleRoot 'private-old.tmp'
+          $largeBlend = Join-Path $sampleRoot 'private-large.blend'
+          $oldLargeZip = Join-Path $sampleRoot 'private-old-large.zip'
+          $excludedRecent = Join-Path $sampleRoot 'private-recent.txt'
+
+          [System.IO.File]::WriteAllBytes($oldTemp, (New-Object byte[] 2048))
+          [System.IO.File]::WriteAllBytes($excludedRecent, (New-Object byte[] 2048))
+
+          $blendStream = [System.IO.File]::OpenWrite($largeBlend)
+          try { $blendStream.SetLength(105MB) } finally { $blendStream.Dispose() }
+
+          $zipStream = [System.IO.File]::OpenWrite($oldLargeZip)
+          try { $zipStream.SetLength(110MB) } finally { $zipStream.Dispose() }
+
+          [System.IO.File]::SetLastWriteTimeUtc($oldTemp, [DateTime]::UtcNow.AddDays(-120))
+          [System.IO.File]::SetLastWriteTimeUtc($largeBlend, [DateTime]::UtcNow.AddDays(-2))
+          [System.IO.File]::SetLastWriteTimeUtc($oldLargeZip, [DateTime]::UtcNow.AddDays(-120))
+          [System.IO.File]::SetLastWriteTimeUtc($excludedRecent, [DateTime]::UtcNow.AddDays(-2))
+
+          $targetDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\')
+
+          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1" `
+            -OutputDirectory $outputDirectory `
+            -TargetDrive $targetDrive `
+            -UserTempPath $sampleRoot
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'UserTemp classification smoke test returned a non-zero exit code.'
+          }
+
+          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-user-temp-classification-*.json' -File)
+          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-user-temp-classification-summary-*.md' -File)
+
+          if ($jsonReports.Count -ne 1 -or $markdownReports.Count -ne 1) {
+              throw 'Smoke test did not create exactly one JSON and one Markdown report.'
+          }
+
+          $jsonText = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8
+          $report = $jsonText | ConvertFrom-Json
+
+          if ($report.Collector -ne 'UserTempClassification' -or $report.ScriptVersion -ne '1.0.0') {
+              throw 'Unexpected collector identity or version.'
+          }
+          if (-not $report.Privacy.Sanitized -or -not $report.Privacy.ExcludedDriveE) {
+              throw 'Required privacy marker is missing.'
+          }
+          if ($report.Privacy.FileNamesCollected -ne $false -or $report.Privacy.FullPathsCollected -ne $false) {
+              throw 'File-name or full-path collection is not disabled.'
+          }
+          if (@($report.SectionFailures).Count -ne 0) {
+              throw 'Smoke test reported a section failure.'
+          }
+          if ($report.QualifyingSummary.Files -ne 3) {
+              throw 'Smoke test did not classify exactly three qualifying files.'
+          }
+          if ($report.QualifyingSummary.OldFiles -ne 2 -or $report.QualifyingSummary.LargeFiles -ne 2 -or $report.QualifyingSummary.OldAndLargeFiles -ne 1) {
+              throw 'Age and size overlap classification is incorrect.'
+          }
+
+          $tempCategory = @($report.Categories | Where-Object { $_.Name -eq 'TemporaryArtifact' })[0]
+          $assetCategory = @($report.Categories | Where-Object { $_.Name -eq 'TechnicalAsset' })[0]
+          $archiveCategory = @($report.Categories | Where-Object { $_.Name -eq 'InstallerOrArchive' })[0]
+
+          if ($tempCategory.Files -ne 1 -or $assetCategory.Files -ne 1 -or $archiveCategory.Files -ne 1) {
+              throw 'Category classification is incorrect.'
+          }
+
+          if ($jsonText -match 'private-(?:old|large|recent)') {
+              throw 'Sanitized report contains a sample file name.'
+          }
+          if ($jsonText -match [regex]::Escape($sampleRoot)) {
+              throw 'Sanitized report contains the source path.'
+          }
+
+          $markdown = Get-Content -LiteralPath $markdownReports[0].FullName -Raw -Encoding UTF8
+          if ($markdown -notmatch '# KARV - classificacao sanitizada de temporarios antigos e grandes') {
+              throw 'Markdown summary header is missing.'
+          }
+
+          Write-Host 'Controlled UserTemp classification smoke test passed.'
+
+      - name: Confirm permanent E drive rejection
+        shell: powershell
+        run: |
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-UserTemp-E-Rejection'
+          $scriptPath = (Resolve-Path -LiteralPath ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1").Path
+          $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
+          $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $startInfo.FileName = $powerShellPath
+          $startInfo.Arguments = '-NoProfile -File "' + $scriptPath + '" -OutputDirectory "' + $outputDirectory + '" -TargetDrive "E:"'
+          $startInfo.UseShellExecute = $false
+          $startInfo.RedirectStandardOutput = $true
+          $startInfo.RedirectStandardError = $true
+          $startInfo.CreateNoWindow = $true
+
+          $process = [System.Diagnostics.Process]::Start($startInfo)
+          $standardOutput = $process.StandardOutput.ReadToEnd()
+          $standardError = $process.StandardError.ReadToEnd()
+          $process.WaitForExit()
+
+          if ($process.ExitCode -eq 0) {
+              throw 'The collector unexpectedly accepted the permanently excluded drive E:.'
+          }
+          if ($standardError -notmatch 'permanently excluded') {
+              throw 'The collector failed, but did not confirm the permanent E drive exclusion.'
+          }
+
+          Write-Host 'Permanent E drive rejection passed.'
