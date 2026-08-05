@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validate with Windows PowerShell
         shell: powershell
@@ -49,6 +51,9 @@ jobs:
         shell: powershell
         run: |
           $changed = @(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Unable to compare protected Fase 2D/2E files.'
+          }
           $protected = @(
               'scripts/diagnostic/Invoke-KarvBlendUserTempClassifier.ps1',
               'scripts/diagnostic/Invoke-KarvBlendAutosaveReview.ps1',
