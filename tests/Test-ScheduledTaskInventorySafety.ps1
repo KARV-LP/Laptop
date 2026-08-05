@@ -145,7 +145,7 @@ try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText(
         $inputPath,
-        ($syntheticTasks | ConvertTo-Json -Depth 10),
+        (ConvertTo-Json -InputObject $syntheticTasks -Depth 10),
         $utf8NoBom
     )
 
@@ -155,7 +155,8 @@ try {
         -SyntheticInputPath $inputPath
 
     Assert-Condition -Condition ($result.Status -eq 'Passed') -Message 'Synthetic inventory did not pass.'
-    Assert-Condition -Condition ($result.TasksEnumerated -eq 6) -Message 'Unexpected enumerated task count.'
+    Assert-Condition -Condition ($result.TasksEnumerated -eq 6) `
+        -Message ('Unexpected enumerated task count: ' + [string]$result.TasksEnumerated)
     Assert-Condition -Condition ($result.EnabledTasks -eq 5) -Message 'Only five synthetic tasks should be enabled.'
     Assert-Condition -Condition ($result.KarvApplicationPreserve -eq 1) -Message 'Unexpected KARV classification count.'
     Assert-Condition -Condition ($result.SystemSecurityPreserve -eq 1) -Message 'Unexpected system classification count.'
