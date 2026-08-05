@@ -1,0 +1,54 @@
+name: Blender UserTemp classifier safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvBlendUserTempClassifier.ps1'
+      - 'tests/Test-BlendUserTempClassifierSafety.ps1'
+      - 'docs/fase-2d-blend-user-temp.md'
+      - '.github/workflows/blend-user-temp-classifier-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Read-only classification and privacy safety
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate with Windows PowerShell
+        shell: powershell
+        run: |
+          try {
+              .\tests\Test-BlendUserTempClassifierSafety.ps1 `
+                -ScriptPath '.\scripts\diagnostic\Invoke-KarvBlendUserTempClassifier.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-BlendUserTempClassifierSafety.ps1"
+          -ScriptPath ".\scripts\diagnostic\Invoke-KarvBlendUserTempClassifier.ps1"
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Safety tests changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after safety tests.'
