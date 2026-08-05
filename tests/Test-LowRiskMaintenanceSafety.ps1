@@ -67,23 +67,23 @@ foreach ($pattern in $forbiddenPatterns) {
 }
 
 $requiredPatterns = @(
-    "ValidateSet\('Preview',\s*'Apply'\)",
-    "\[string\]\$Mode\s*=\s*'Preview'",
-    "\$MinimumAgeDays\s*-lt\s*90",
-    "'\.tmp'",
-    "'\.log'",
-    "'\.etl'",
-    "'\.dmp'",
-    "\$Mode\s*-eq\s*'Apply'",
-    "ApplicationsClosed",
-    "ConfirmationToken",
-    "KARV-LOW-RISK-CLEANUP-AUTHORIZED",
-    "System\.IO\.File\]::Delete",
-    "Drive E: is permanently excluded",
-    "FileNamesCollected\s*=\s*\$false",
-    "FullPathsCollected\s*=\s*\$false",
-    "FileContentsCollected\s*=\s*\$false",
-    "NetworkCollected\s*=\s*\$false"
+    'ValidateSet\(''Preview'',\s*''Apply''\)',
+    '\[string\]\$Mode\s*=\s*''Preview''',
+    '\$MinimumAgeDays\s*-lt\s*90',
+    '\.tmp',
+    '\.log',
+    '\.etl',
+    '\.dmp',
+    '\$Mode\s*-eq\s*''Apply''',
+    'ApplicationsClosed',
+    'ConfirmationToken',
+    'KARV-LOW-RISK-CLEANUP-AUTHORIZED',
+    'System\.IO\.File\]::Delete',
+    'Drive E: is permanently excluded',
+    'FileNamesCollected\s*=\s*\$false',
+    'FullPathsCollected\s*=\s*\$false',
+    'FileContentsCollected\s*=\s*\$false',
+    'NetworkCollected\s*=\s*\$false'
 )
 
 foreach ($pattern in $requiredPatterns) {
@@ -92,7 +92,7 @@ foreach ($pattern in $requiredPatterns) {
     }
 }
 
-$applyIndex = $source.IndexOf("if (`$Mode -eq 'Apply')")
+$applyIndex = $source.IndexOf('if ($Mode -eq ''Apply'')')
 $deleteIndex = $source.IndexOf('[System.IO.File]::Delete')
 if ($applyIndex -lt 0 -or $deleteIndex -lt 0 -or $deleteIndex -lt $applyIndex) {
     $violations.Add('File deletion is not positioned after the Apply guard.')
