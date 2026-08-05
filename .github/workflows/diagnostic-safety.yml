@@ -53,14 +53,32 @@ jobs:
               throw 'Diagnostic smoke test did not create exactly one Markdown report.'
           }
 
-          $report = Get-Content -LiteralPath $jsonReports[0].FullName -Raw | ConvertFrom-Json
+          $report = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
 
-          if ($report.ScriptVersion -ne '1.0.1') {
+          if ($report.ScriptVersion -ne '1.0.2') {
               throw 'Unexpected diagnostic script version in smoke-test report.'
           }
 
           if (-not $report.Privacy.Sanitized) {
               throw 'Smoke-test report is not marked as sanitized.'
+          }
+
+          $applicationFailures = @($report.SectionFailures | Where-Object { $_.Section -eq 'Applications' })
+          if ($applicationFailures.Count -gt 0) {
+              throw 'Applications section failed during the diagnostic smoke test.'
+          }
+
+          if (@($report.Applications).Count -lt 1) {
+              throw 'Applications inventory is unexpectedly empty.'
+          }
+
+          $markdown = Get-Content -LiteralPath $markdownReports[0].FullName -Raw -Encoding UTF8
+          if ($markdown -notmatch '# Diagnostico KARV - resumo sanitizado') {
+              throw 'Markdown summary header is missing or incorrectly encoded.'
+          }
+
+          if ($markdown -match 'Ã|Â|â€') {
+              throw 'Markdown summary contains mojibake markers.'
           }
 
           Write-Host 'Diagnostic runtime smoke test passed.'
