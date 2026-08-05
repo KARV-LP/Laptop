@@ -7,7 +7,7 @@ param(
     [string]$OutputDirectory,
     [string]$UserTempPath,
 
-    [ValidateRange(91, 3650)]
+    [ValidateRange(90, 3650)]
     [int]$MinimumAgeDays = 90
 )
 
@@ -71,11 +71,7 @@ function Test-IsAutosaveOrRecoveryName {
 }
 
 function New-Metric {
-    return [pscustomobject]@{
-        Files = 0L
-        Bytes = 0L
-        GB    = 0.0
-    }
+    return [pscustomobject]@{ Files = 0L; Bytes = 0L; GB = 0.0 }
 }
 
 function Add-ToMetric {
@@ -85,9 +81,7 @@ function Add-ToMetric {
     )
 
     $Metric.Files++
-    if ($Length -gt 0) {
-        $Metric.Bytes += $Length
-    }
+    if ($Length -gt 0) { $Metric.Bytes += $Length }
 }
 
 function Complete-Metric {
@@ -149,16 +143,13 @@ function Add-SanitizedError {
         [Parameter(Mandatory = $true)][string]$ErrorType
     )
 
-    if (-not $ErrorTable.ContainsKey($ErrorType)) {
-        $ErrorTable[$ErrorType] = 0L
-    }
+    if (-not $ErrorTable.ContainsKey($ErrorType)) { $ErrorTable[$ErrorType] = 0L }
     $ErrorTable[$ErrorType]++
 }
 
 if ($Mode -ne 'Preview') {
     throw 'Only Preview mode is permitted in Fase 2E.'
 }
-
 if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
     throw 'LOCALAPPDATA is unavailable.'
 }
@@ -170,7 +161,6 @@ $allowedOutputRoot = Get-ValidatedCDrivePath `
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $allowedOutputRoot
 }
-
 if ([string]::IsNullOrWhiteSpace($UserTempPath)) {
     $UserTempPath = [System.IO.Path]::GetTempPath()
 }
@@ -193,24 +183,20 @@ $riskNames = @(
     'LowerRiskReview',
     'ReadErrorProtected'
 )
-
 $riskMetrics = @{}
-foreach ($riskName in $riskNames) {
-    $riskMetrics[$riskName] = New-Metric
-}
+foreach ($riskName in $riskNames) { $riskMetrics[$riskName] = New-Metric }
 
 $ageBuckets = [ordered]@{
-    Days91To180  = New-Metric
+    Days91To180 = New-Metric
     Days181To365 = New-Metric
     Days366To730 = New-Metric
-    DaysOver730  = New-Metric
+    DaysOver730 = New-Metric
 }
-
 $sizeBuckets = [ordered]@{
-    Under10MB        = New-Metric
-    From10MBTo100MB  = New-Metric
+    Under10MB = New-Metric
+    From10MBTo100MB = New-Metric
     From100MBTo500MB = New-Metric
-    Over500MB        = New-Metric
+    Over500MB = New-Metric
 }
 
 $totalMetric = New-Metric
@@ -221,9 +207,7 @@ $skippedDirectoryReparsePoints = 0L
 
 $blenderProcessDetected = $false
 try {
-    $blenderProcessDetected = @(
-        Get-Process -Name 'blender' -ErrorAction SilentlyContinue
-    ).Count -gt 0
+    $blenderProcessDetected = @(Get-Process -Name 'blender' -ErrorAction SilentlyContinue).Count -gt 0
 }
 catch {
     $blenderProcessDetected = $false
@@ -246,21 +230,15 @@ try {
         }
 
         foreach ($file in $files) {
-            if (-not [string]::Equals($file.Extension, '.blend', [System.StringComparison]::OrdinalIgnoreCase)) {
-                continue
-            }
-            if (-not (Test-IsAutosaveOrRecoveryName -FileName $file.Name)) {
-                continue
-            }
+            if (-not [string]::Equals($file.Extension, '.blend', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (-not (Test-IsAutosaveOrRecoveryName -FileName $file.Name)) { continue }
 
             try {
                 $length = [int64]$file.Length
                 $lastWriteUtc = $file.LastWriteTimeUtc
                 $ageDays = [int][Math]::Floor(($nowUtc - $lastWriteUtc).TotalDays)
                 if ($ageDays -lt 0) { $ageDays = 0 }
-                if ($ageDays -le $MinimumAgeDays) {
-                    continue
-                }
+                if ($ageDays -le $MinimumAgeDays) { continue }
 
                 $attributes = $file.Attributes
                 $riskClass = Get-RiskClass `
@@ -275,17 +253,17 @@ try {
                 Add-ToMetric -Metric $sizeBuckets[(Get-SizeBucketName -Length $length)] -Length $length
 
                 $manifestItems.Add([pscustomobject]@{
-                    ReviewId        = $null
-                    FileName        = $file.Name
-                    FullPath        = $file.FullName
-                    LengthBytes     = $length
-                    SizeMB          = [Math]::Round(([double]$length / 1MB), 3)
-                    AgeDays         = $ageDays
-                    LastWriteUtc    = $lastWriteUtc.ToString('o')
-                    Attributes      = $attributes.ToString()
-                    RiskClass       = $riskClass
-                    MetadataError   = $null
-                    Protected       = $true
+                    ReviewId = $null
+                    FileName = $file.Name
+                    FullPath = $file.FullName
+                    LengthBytes = $length
+                    SizeMB = [Math]::Round(([double]$length / 1MB), 3)
+                    AgeDays = $ageDays
+                    LastWriteUtc = $lastWriteUtc.ToString('o')
+                    Attributes = $attributes.ToString()
+                    RiskClass = $riskClass
+                    MetadataError = $null
+                    Protected = $true
                 })
             }
             catch {
@@ -295,17 +273,17 @@ try {
                 Add-ToMetric -Metric $riskMetrics['ReadErrorProtected'] -Length 0
 
                 $manifestItems.Add([pscustomobject]@{
-                    ReviewId        = $null
-                    FileName        = $file.Name
-                    FullPath        = $file.FullName
-                    LengthBytes     = $null
-                    SizeMB          = $null
-                    AgeDays         = $null
-                    LastWriteUtc    = $null
-                    Attributes      = $null
-                    RiskClass       = 'ReadErrorProtected'
-                    MetadataError   = $errorType
-                    Protected       = $true
+                    ReviewId = $null
+                    FileName = $file.Name
+                    FullPath = $file.FullName
+                    LengthBytes = $null
+                    SizeMB = $null
+                    AgeDays = $null
+                    LastWriteUtc = $null
+                    Attributes = $null
+                    RiskClass = 'ReadErrorProtected'
+                    MetadataError = $errorType
+                    Protected = $true
                 })
             }
         }
@@ -329,7 +307,7 @@ try {
 }
 catch {
     $sectionFailures.Add([pscustomobject]@{
-        Section   = 'BlendAutosaveReview'
+        Section = 'BlendAutosaveReview'
         ErrorType = $_.Exception.GetType().Name
     })
 }
@@ -357,12 +335,7 @@ $totalMetric = Complete-Metric -Metric $totalMetric
 $completedRisks = @(
     $riskNames | ForEach-Object {
         $metric = Complete-Metric -Metric $riskMetrics[$_]
-        [pscustomobject]@{
-            Name  = $_
-            Files = $metric.Files
-            Bytes = $metric.Bytes
-            GB    = $metric.GB
-        }
+        [pscustomobject]@{ Name = $_; Files = $metric.Files; Bytes = $metric.Bytes; GB = $metric.GB }
     }
 )
 
@@ -370,7 +343,6 @@ $completedAgeBuckets = [ordered]@{}
 foreach ($bucketName in $ageBuckets.Keys) {
     $completedAgeBuckets[$bucketName] = Complete-Metric -Metric $ageBuckets[$bucketName]
 }
-
 $completedSizeBuckets = [ordered]@{}
 foreach ($bucketName in $sizeBuckets.Keys) {
     $completedSizeBuckets[$bucketName] = Complete-Metric -Metric $sizeBuckets[$bucketName]
@@ -379,12 +351,7 @@ foreach ($bucketName in $sizeBuckets.Keys) {
 $sanitizedErrors = @(
     $errorTypes.GetEnumerator() |
         Sort-Object Name |
-        ForEach-Object {
-            [pscustomobject]@{
-                ErrorType = $_.Name
-                Count     = $_.Value
-            }
-        }
+        ForEach-Object { [pscustomobject]@{ ErrorType = $_.Name; Count = $_.Value } }
 )
 
 $timestamp = $nowUtc.ToString('yyyyMMdd-HHmmss')
@@ -449,16 +416,8 @@ $summary = [pscustomobject]@{
 }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText(
-    $manifestPath,
-    ($manifest | ConvertTo-Json -Depth 10),
-    $utf8NoBom
-)
-[System.IO.File]::WriteAllText(
-    $summaryPath,
-    ($summary | ConvertTo-Json -Depth 10),
-    $utf8NoBom
-)
+[System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), $utf8NoBom)
+[System.IO.File]::WriteAllText($summaryPath, ($summary | ConvertTo-Json -Depth 10), $utf8NoBom)
 
 [pscustomobject]@{
     Status = if ($sectionFailures.Count -eq 0) { 'Passed' } else { 'Partial' }
