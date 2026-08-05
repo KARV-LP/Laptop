@@ -27,34 +27,15 @@ if ($parseErrors.Count -gt 0) {
 }
 
 $forbiddenCommands = @(
-    'Remove-Item',
-    'Clear-Content',
-    'Set-Content',
-    'Add-Content',
-    'Copy-Item',
-    'Move-Item',
-    'Rename-Item',
-    'Stop-Process',
-    'Start-Process',
-    'Stop-Service',
-    'Start-Service',
-    'Restart-Service',
-    'Set-Service',
-    'Invoke-WebRequest',
-    'Invoke-RestMethod',
-    'Start-BitsTransfer',
-    'Restart-Computer',
-    'Stop-Computer',
-    'Format-Volume',
-    'Initialize-Disk',
-    'Clear-Disk',
-    'Set-Disk',
-    'Set-Partition',
-    'Repair-Volume',
-    'Optimize-Volume',
-    'Clear-RecycleBin',
-    'Get-FileHash',
-    'Get-Content'
+    'Remove-Item', 'Clear-Content', 'Set-Content', 'Add-Content',
+    'Copy-Item', 'Move-Item', 'Rename-Item',
+    'Stop-Process', 'Start-Process',
+    'Stop-Service', 'Start-Service', 'Restart-Service', 'Set-Service',
+    'Invoke-WebRequest', 'Invoke-RestMethod', 'Start-BitsTransfer',
+    'Restart-Computer', 'Stop-Computer',
+    'Format-Volume', 'Initialize-Disk', 'Clear-Disk', 'Set-Disk',
+    'Set-Partition', 'Repair-Volume', 'Optimize-Volume', 'Clear-RecycleBin',
+    'Get-FileHash', 'Get-Content'
 )
 
 $forbiddenExecutables = @(
@@ -79,18 +60,10 @@ foreach ($commandName in $commandNames) {
 
 $source = [System.IO.File]::ReadAllText($resolvedScriptPath)
 $forbiddenTextPatterns = @(
-    '(?i)System\.Net\.',
-    '(?i)DownloadString',
-    '(?i)DownloadFile',
-    '(?i)TcpClient',
-    '(?i)UdpClient',
-    '(?i)Get-FileHash',
-    '(?i)ReadAllBytes',
-    '(?i)ReadAllText',
-    '(?i)OpenRead',
-    '(?i)StreamReader',
-    '(?i)BinaryReader',
-    '(?i)FileMode\]::Open'
+    '(?i)System\.Net\.', '(?i)DownloadString', '(?i)DownloadFile',
+    '(?i)TcpClient', '(?i)UdpClient', '(?i)Get-FileHash',
+    '(?i)ReadAllBytes', '(?i)ReadAllText', '(?i)OpenRead',
+    '(?i)StreamReader', '(?i)BinaryReader', '(?i)FileMode\]::Open'
 )
 
 foreach ($pattern in $forbiddenTextPatterns) {
@@ -112,10 +85,7 @@ $requiredPatterns = @(
     'FileContentRead\s*=\s*\$false',
     'HashesCalculated\s*=\s*\$false',
     'SensitiveLocalData\s*=\s*\$true',
-    'HighRiskPreserve',
-    'MediumRiskReview',
-    'LowerRiskReview',
-    'ReadErrorProtected'
+    'HighRiskPreserve', 'MediumRiskReview', 'LowerRiskReview', 'ReadErrorProtected'
 )
 
 foreach ($pattern in $requiredPatterns) {
@@ -148,12 +118,8 @@ try {
 
         $path = Join-Path $sampleRoot $Name
         $stream = [System.IO.File]::OpenWrite($path)
-        try {
-            $stream.SetLength($Length)
-        }
-        finally {
-            $stream.Dispose()
-        }
+        try { $stream.SetLength($Length) }
+        finally { $stream.Dispose() }
         [System.IO.File]::SetLastWriteTimeUtc($path, $LastWriteUtc)
     }
 
@@ -198,17 +164,26 @@ try {
         $manifest.ScriptVersion -ne '1.0.0' -or
         $manifest.SensitiveLocalData -ne $true -or
         $manifest.LocalOnly -ne $true -or
-        @($manifest.Items).Count -ne 5) {
-        throw 'Local manifest identity, sensitivity marker, or item count is incorrect.'
+        @($manifest.Items).Count -ne 5 -or
+        -not [string]::Equals($manifest.SourceRoot, $sampleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Local manifest identity, sensitivity marker, source, or item count is incorrect.'
     }
 
-    if ($manifestText -notmatch 'autosave-archive\.blend' -or
-        $manifestText -notmatch [regex]::Escape($sampleRoot)) {
-        throw 'Local manifest did not retain the detailed local review data.'
+    $manifestNames = @($manifest.Items | ForEach-Object { $_.FileName })
+    if ($manifestNames -notcontains 'autosave-archive.blend') {
+        throw 'Local manifest did not retain the selected file name.'
     }
-    if ($manifestText -match 'ordinary-project\.blend' -or
-        $manifestText -match 'autosave-recent\.blend') {
+    if ($manifestNames -contains 'ordinary-project.blend' -or
+        $manifestNames -contains 'autosave-recent.blend') {
         throw 'Local manifest selected a non-autosave or a recent autosave.'
+    }
+
+    foreach ($item in $manifest.Items) {
+        if (-not $item.Protected -or
+            [string]::IsNullOrWhiteSpace($item.ReviewId) -or
+            -not $item.FullPath.StartsWith($sampleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Local manifest item protection, identifier, or path is incorrect.'
+        }
     }
 
     if ($summary.Collector -ne 'BlendAutosaveReview' -or
@@ -233,9 +208,7 @@ try {
     }
 
     $riskCounts = @{}
-    foreach ($risk in $summary.Risks) {
-        $riskCounts[$risk.Name] = [int64]$risk.Files
-    }
+    foreach ($risk in $summary.Risks) { $riskCounts[$risk.Name] = [int64]$risk.Files }
     if ($riskCounts['HighRiskPreserve'] -ne 2 -or
         $riskCounts['MediumRiskReview'] -ne 2 -or
         $riskCounts['LowerRiskReview'] -ne 1 -or
@@ -255,41 +228,23 @@ try {
     }
 
     $previewRejected = $false
-    try {
-        & $resolvedScriptPath -Mode Apply -OutputDirectory $outputDirectory -UserTempPath $sampleRoot | Out-Null
-    }
-    catch {
-        $previewRejected = $true
-    }
-    if (-not $previewRejected) {
-        throw 'A non-Preview mode was unexpectedly accepted.'
-    }
+    try { & $resolvedScriptPath -Mode Apply -OutputDirectory $outputDirectory -UserTempPath $sampleRoot | Out-Null }
+    catch { $previewRejected = $true }
+    if (-not $previewRejected) { throw 'A non-Preview mode was unexpectedly accepted.' }
 
     $excludedDriveRejected = $false
-    try {
-        & $resolvedScriptPath -OutputDirectory $outputDirectory -UserTempPath 'E:\KARV-Forbidden' | Out-Null
-    }
+    try { & $resolvedScriptPath -OutputDirectory $outputDirectory -UserTempPath 'E:\KARV-Forbidden' | Out-Null }
     catch {
-        if ($_.Exception.Message -match 'permanently excluded drive E:') {
-            $excludedDriveRejected = $true
-        }
+        if ($_.Exception.Message -match 'permanently excluded drive E:') { $excludedDriveRejected = $true }
     }
-    if (-not $excludedDriveRejected) {
-        throw 'Drive E: was not explicitly rejected.'
-    }
+    if (-not $excludedDriveRejected) { throw 'Drive E: was not explicitly rejected.' }
 
     $outsideCRejected = $false
-    try {
-        & $resolvedScriptPath -OutputDirectory $outputDirectory -UserTempPath 'D:\KARV-Outside-C' | Out-Null
-    }
+    try { & $resolvedScriptPath -OutputDirectory $outputDirectory -UserTempPath 'D:\KARV-Outside-C' | Out-Null }
     catch {
-        if ($_.Exception.Message -match 'must remain on drive C:') {
-            $outsideCRejected = $true
-        }
+        if ($_.Exception.Message -match 'must remain on drive C:') { $outsideCRejected = $true }
     }
-    if (-not $outsideCRejected) {
-        throw 'A source outside drive C: was not rejected.'
-    }
+    if (-not $outsideCRejected) { throw 'A source outside drive C: was not rejected.' }
 
     $outsideOutputRejected = $false
     try {
@@ -298,9 +253,7 @@ try {
             -UserTempPath $sampleRoot | Out-Null
     }
     catch {
-        if ($_.Exception.Message -match 'must remain inside LOCALAPPDATA') {
-            $outsideOutputRejected = $true
-        }
+        if ($_.Exception.Message -match 'must remain inside LOCALAPPDATA') { $outsideOutputRejected = $true }
     }
     if (-not $outsideOutputRejected) {
         throw 'An output directory outside the approved diagnostics root was not rejected.'
