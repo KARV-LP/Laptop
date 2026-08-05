@@ -121,16 +121,27 @@ jobs:
         shell: powershell
         run: |
           $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-UserTemp-E-Rejection'
+          $scriptPath = (Resolve-Path -LiteralPath ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1").Path
+          $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
-          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvUserTempClassification.ps1" `
-            -OutputDirectory $outputDirectory `
-            -TargetDrive 'E:' 2>$null
+          $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $startInfo.FileName = $powerShellPath
+          $startInfo.Arguments = '-NoProfile -File "' + $scriptPath + '" -OutputDirectory "' + $outputDirectory + '" -TargetDrive "E:"'
+          $startInfo.UseShellExecute = $false
+          $startInfo.RedirectStandardOutput = $true
+          $startInfo.RedirectStandardError = $true
+          $startInfo.CreateNoWindow = $true
 
-          $rejectionExitCode = $LASTEXITCODE
-          $global:LASTEXITCODE = 0
+          $process = [System.Diagnostics.Process]::Start($startInfo)
+          $standardOutput = $process.StandardOutput.ReadToEnd()
+          $standardError = $process.StandardError.ReadToEnd()
+          $process.WaitForExit()
 
-          if ($rejectionExitCode -eq 0) {
+          if ($process.ExitCode -eq 0) {
               throw 'The collector unexpectedly accepted the permanently excluded drive E:.'
+          }
+          if ($standardError -notmatch 'permanently excluded') {
+              throw 'The collector failed, but did not confirm the permanent E drive exclusion.'
           }
 
           Write-Host 'Permanent E drive rejection passed.'
