@@ -1,0 +1,88 @@
+name: Persistence triage panel safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvPersistenceTriagePanel.ps1'
+      - 'tests/Test-PersistenceTriagePanelSafety.ps1'
+      - 'docs/fase-3d-persistence-triage-panel.md'
+      - '.github/workflows/persistence-triage-panel-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Read-only persistence triage panel
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate with Windows PowerShell
+        shell: powershell
+        run: |
+          try {
+              .\tests\Test-PersistenceTriagePanelSafety.ps1 `
+                -ScriptPath '.\scripts\diagnostic\Invoke-KarvPersistenceTriagePanel.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-PersistenceTriagePanelSafety.ps1"
+          -ScriptPath ".\scripts\diagnostic\Invoke-KarvPersistenceTriagePanel.ps1"
+
+      - name: Confirm previous phase files are unchanged
+        if: github.event_name == 'pull_request'
+        shell: powershell
+        run: |
+          $baseSha = "${{ github.event.pull_request.base.sha }}"
+          $headSha = "${{ github.event.pull_request.head.sha }}"
+          git cat-file -e ($baseSha + '^{commit}')
+          if ($LASTEXITCODE -ne 0) { throw 'Base commit is unavailable.' }
+          git cat-file -e ($headSha + '^{commit}')
+          if ($LASTEXITCODE -ne 0) { throw 'Head commit is unavailable.' }
+          $changed = @(git diff --name-only $baseSha $headSha)
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to compare protected files.' }
+          $protected = @(
+              'scripts/diagnostic/Invoke-KarvBlendUserTempClassifier.ps1',
+              'scripts/diagnostic/Invoke-KarvBlendAutosaveReview.ps1',
+              'scripts/diagnostic/Invoke-KarvBlendTriagePanel.ps1',
+              'scripts/diagnostic/Invoke-KarvStartupInventory.ps1',
+              'scripts/diagnostic/Invoke-KarvPersistentServiceInventory.ps1',
+              'scripts/diagnostic/Invoke-KarvScheduledTaskInventory.ps1',
+              'tests/Test-BlendUserTempClassifierSafety.ps1',
+              'tests/Test-BlendAutosaveReviewSafety.ps1',
+              'tests/Test-BlendTriagePanelSafety.ps1',
+              'tests/Test-StartupInventorySafety.ps1',
+              'tests/Test-PersistentServiceInventorySafety.ps1',
+              'tests/Test-ScheduledTaskInventorySafety.ps1'
+          )
+          $violations = @($changed | Where-Object { $protected -contains $_ })
+          if ($violations.Count -ne 0) {
+              throw ('Protected previous-phase files were modified: ' + ($violations -join '; '))
+          }
+          Write-Host 'Protected previous-phase files remained unchanged.'
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Safety tests changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after safety tests.'
