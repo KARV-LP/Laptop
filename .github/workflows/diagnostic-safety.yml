@@ -15,21 +15,29 @@ jobs:
   static-safety:
     name: PowerShell safety and runtime
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate direct Windows PowerShell invocation
+      - name: Validate baseline diagnostic directly
         shell: powershell
         run: .\tests\Test-DiagnosticSafety.ps1
 
-      - name: Validate documented nested powershell.exe invocation
+      - name: Validate baseline documented invocation
         shell: cmd
         run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1"
 
-      - name: Execute read-only diagnostic smoke test
+      - name: Validate targeted diagnostic directly
+        shell: powershell
+        run: .\tests\Test-DiagnosticSafety.ps1 -ScriptPath ".\scripts\diagnostic\Invoke-KarvStorageSecurityDiagnostic.ps1"
+
+      - name: Validate targeted documented invocation
+        shell: cmd
+        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1" -ScriptPath ".\scripts\diagnostic\Invoke-KarvStorageSecurityDiagnostic.ps1"
+
+      - name: Execute baseline read-only diagnostic smoke test
         shell: powershell
         run: |
           $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LaptopDiagnostics-Smoke'
@@ -42,8 +50,8 @@ jobs:
               throw 'Diagnostic smoke test returned a non-zero exit code.'
           }
 
-          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter '*.json' -File)
-          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter '*.md' -File)
+          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-laptop-diagnostic-*.json' -File)
+          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-laptop-summary-*.md' -File)
 
           if ($jsonReports.Count -ne 1) {
               throw 'Diagnostic smoke test did not create exactly one JSON report.'
@@ -100,4 +108,80 @@ jobs:
               }
           }
 
-          Write-Host 'Diagnostic runtime smoke test passed.'
+          Write-Host 'Baseline diagnostic runtime smoke test passed.'
+
+      - name: Execute targeted storage and security smoke test
+        shell: powershell
+        run: |
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-StorageSecurity-Smoke'
+
+          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvStorageSecurityDiagnostic.ps1" `
+            -OutputDirectory $outputDirectory `
+            -EventLookbackDays 1 `
+            -MaxDiskEvents 5
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Targeted diagnostic returned a non-zero exit code.'
+          }
+
+          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-storage-security-*.json' -File)
+          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-storage-security-summary-*.md' -File)
+
+          if ($jsonReports.Count -ne 1) {
+              throw 'Targeted diagnostic did not create exactly one JSON report.'
+          }
+
+          if ($markdownReports.Count -ne 1) {
+              throw 'Targeted diagnostic did not create exactly one Markdown report.'
+          }
+
+          $jsonText = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8
+          $report = $jsonText | ConvertFrom-Json
+
+          if ($report.Collector -ne 'StorageSecurity' -or $report.ScriptVersion -ne '1.0.0') {
+              throw 'Unexpected targeted collector identity or version.'
+          }
+
+          if (-not $report.Privacy.Sanitized) {
+              throw 'Targeted report is not marked as sanitized.'
+          }
+
+          $requiredFalseMarkers = @(
+              'ComputerNameCollected',
+              'UserNameCollected',
+              'SidCollected',
+              'SerialCollected',
+              'NetworkCollected',
+              'EventMessagesCollected',
+              'SecurityPathsCollected',
+              'SecurityGuidsCollected'
+          )
+
+          foreach ($propertyName in $requiredFalseMarkers) {
+              if ($report.Privacy.$propertyName -ne $false) {
+                  throw ('Targeted privacy marker is not false: ' + $propertyName)
+              }
+          }
+
+          if (@($report.SectionFailures).Count -ne 0) {
+              throw 'Targeted diagnostic reported unavailable core sections.'
+          }
+
+          if (@($report.DiskInventory).Count -lt 1) {
+              throw 'Targeted diagnostic did not inventory any disks.'
+          }
+
+          if ($jsonText -match '\bS-1-\d+(?:-\d+)+\b') {
+              throw 'Targeted report contains an unsanitized Windows SID.'
+          }
+
+          if ($jsonText -match '"(?:Message|SerialNumber|UniqueId|InstanceGuid|PathToSignedProductExe|PathToSignedReportingExe)"\s*:') {
+              throw 'Targeted report contains a prohibited property.'
+          }
+
+          $markdown = Get-Content -LiteralPath $markdownReports[0].FullName -Raw -Encoding UTF8
+          if ($markdown -notmatch '# KARV - investigacao de armazenamento e seguranca') {
+              throw 'Targeted Markdown summary header is missing.'
+          }
+
+          Write-Host 'Targeted storage and security runtime smoke test passed.'
