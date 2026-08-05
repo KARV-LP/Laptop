@@ -132,19 +132,17 @@ function Get-TaskClassification {
         return 'UnresolvedPreserve'
     }
 
-    $karvPatterns = @(
+    foreach ($pattern in @(
         'karv', 'blender', 'rhino', 'substance', 'adobe', 'canon',
         'github', 'cloudflare', 'node', 'python'
-    )
-    foreach ($pattern in $karvPatterns) {
+    )) {
         if ($text.Contains($pattern)) { return 'KarvApplicationPreserve' }
     }
 
-    $systemPatterns = @(
+    foreach ($pattern in @(
         '\microsoft\windows\', 'microsoft', 'windows', 'defender',
         'security', 'intel', 'nvidia', 'realtek', 'synaptics', 'driver'
-    )
-    foreach ($pattern in $systemPatterns) {
+    )) {
         if ($text.Contains($pattern)) { return 'SystemSecurityPreserve' }
     }
 
@@ -175,8 +173,7 @@ function Convert-TaskRecord {
     $actionTextParts = New-Object System.Collections.Generic.List[string]
     $hasExcludedDriveReference = $false
 
-    $actions = @(Get-OptionalPropertyValue -Object $Task -Name 'Actions')
-    foreach ($action in $actions) {
+    foreach ($action in @(Get-OptionalPropertyValue -Object $Task -Name 'Actions')) {
         if ($null -eq $action) { continue }
 
         $execute = [string](Get-OptionalPropertyValue -Object $action -Name 'Execute')
@@ -204,8 +201,7 @@ function Convert-TaskRecord {
     }
 
     $triggerCategories = New-Object System.Collections.Generic.List[string]
-    $triggers = @(Get-OptionalPropertyValue -Object $Task -Name 'Triggers')
-    foreach ($trigger in $triggers) {
+    foreach ($trigger in @(Get-OptionalPropertyValue -Object $Task -Name 'Triggers')) {
         if ($null -eq $trigger) { continue }
         $triggerCategories.Add((Get-TriggerCategory -Trigger $trigger))
     }
@@ -252,18 +248,24 @@ $validatedOutputDirectory = Get-ValidatedCDrivePath -Path $OutputDirectory -Purp
 if (-not (Test-IsPathInsideRoot -Path $validatedOutputDirectory -Root $allowedOutputRoot)) {
     throw 'OutputDirectory must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
 }
+
+$validatedSyntheticInputPath = $null
+if (-not [string]::IsNullOrWhiteSpace($SyntheticInputPath)) {
+    $validatedSyntheticInputPath = Get-ValidatedCDrivePath `
+        -Path $SyntheticInputPath `
+        -Purpose 'SyntheticInputPath'
+    if (-not (Test-IsPathInsideRoot -Path $validatedSyntheticInputPath -Root $allowedOutputRoot)) {
+        throw 'SyntheticInputPath must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
+    }
+}
+
 [System.IO.Directory]::CreateDirectory($validatedOutputDirectory) | Out-Null
 
 $rawTasks = @()
 $sectionFailures = New-Object System.Collections.Generic.List[object]
 try {
-    if (-not [string]::IsNullOrWhiteSpace($SyntheticInputPath)) {
-        $validatedInputPath = Get-ValidatedCDrivePath -Path $SyntheticInputPath -Purpose 'SyntheticInputPath'
-        if (-not (Test-IsPathInsideRoot -Path $validatedInputPath -Root $allowedOutputRoot)) {
-            throw 'SyntheticInputPath must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
-        }
-
-        $parsedTasks = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($validatedInputPath))
+    if ($null -ne $validatedSyntheticInputPath) {
+        $parsedTasks = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($validatedSyntheticInputPath))
         $rawTasks = @($parsedTasks | ForEach-Object { $_ })
     }
     else {
