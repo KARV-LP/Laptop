@@ -18,7 +18,6 @@ $scriptVersion = '1.0.0'
 $collectorName = 'WindowsUpdateOperationalDiagnostic'
 $nowUtc = [DateTime]::UtcNow
 $eventLimit = 200
-
 $essentialServices = @(
     [pscustomobject]@{ Name = 'wuauserv'; DisplayName = 'Windows Update' },
     [pscustomobject]@{ Name = 'BITS'; DisplayName = 'Background Intelligent Transfer Service' },
@@ -28,11 +27,7 @@ $essentialServices = @(
 )
 
 function Get-OptionalPropertyValue {
-    param(
-        [AllowNull()]$Object,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-
+    param([AllowNull()]$Object, [Parameter(Mandatory = $true)][string]$Name)
     if ($null -eq $Object) { return $null }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -eq $property) { return $null }
@@ -47,44 +42,27 @@ function Get-ValidatedOutputPath {
 
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $root = [System.IO.Path]::GetPathRoot($fullPath)
-    if ([string]::IsNullOrWhiteSpace($root)) {
-        throw 'Output path has no valid drive root.'
-    }
-
+    if ([string]::IsNullOrWhiteSpace($root)) { throw 'Output path has no valid drive root.' }
     $drive = $root.TrimEnd('\').ToUpperInvariant()
     if ($drive -eq 'E:') { throw 'Drive E: is permanently excluded.' }
     if ($drive -ne 'C:') { throw 'Output must remain on drive C:.' }
 
     $normalizedRoot = [System.IO.Path]::GetFullPath($AllowedRoot).TrimEnd('\')
     $normalizedPath = $fullPath.TrimEnd('\')
-    $inside = [string]::Equals(
-        $normalizedRoot,
-        $normalizedPath,
-        [System.StringComparison]::OrdinalIgnoreCase
-    ) -or $normalizedPath.StartsWith(
-        $normalizedRoot + '\',
-        [System.StringComparison]::OrdinalIgnoreCase
-    )
-
-    if (-not $inside) {
-        throw 'Output must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.'
-    }
-
+    $inside = [string]::Equals($normalizedRoot, $normalizedPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedPath.StartsWith($normalizedRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $inside) { throw 'Output must remain inside LOCALAPPDATA\KARV\LaptopDiagnostics.' }
     return $fullPath
 }
 
 function Convert-ToHtmlText {
     param([AllowNull()]$Value)
-
     if ($null -eq $Value) { return '' }
     return [System.Net.WebUtility]::HtmlEncode([string]$Value)
 }
 
 function Test-RegistrySubKeyExists {
-    param(
-        [Parameter(Mandatory = $true)][string]$SubKeyPath
-    )
-
+    param([Parameter(Mandatory = $true)][string]$SubKeyPath)
     $baseKey = $null
     $subKey = $null
     try {
@@ -106,7 +84,6 @@ function Test-RegistryValueExistsWithoutReading {
         [Parameter(Mandatory = $true)][string]$SubKeyPath,
         [Parameter(Mandatory = $true)][string]$ValueName
     )
-
     $baseKey = $null
     $subKey = $null
     try {
@@ -124,108 +101,74 @@ function Test-RegistryValueExistsWithoutReading {
     }
 }
 
-function Get-LocalPendingIndicators {
-    $items = New-Object System.Collections.Generic.List[object]
-
-    $items.Add([pscustomobject]@{
-        Name = 'ComponentBasedServicingRebootPending'
-        Present = [bool](Test-RegistrySubKeyExists -SubKeyPath 'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
-        EvidenceType = 'RegistryKeyExistence'
-        ValueContentRead = $false
-    })
-
-    $items.Add([pscustomobject]@{
-        Name = 'WindowsUpdateRebootRequired'
-        Present = [bool](Test-RegistrySubKeyExists -SubKeyPath 'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
-        EvidenceType = 'RegistryKeyExistence'
-        ValueContentRead = $false
-    })
-
-    $items.Add([pscustomobject]@{
-        Name = 'PendingFileRenameOperations'
-        Present = [bool](Test-RegistryValueExistsWithoutReading `
-            -SubKeyPath 'SYSTEM\CurrentControlSet\Control\Session Manager' `
-            -ValueName 'PendingFileRenameOperations')
-        EvidenceType = 'RegistryValueNameExistence'
-        ValueContentRead = $false
-    })
-
-    return @($items.ToArray())
+function Read-PendingIndicators {
+    return @(
+        [pscustomobject]@{
+            Name = 'ComponentBasedServicingRebootPending'
+            Present = [bool](Test-RegistrySubKeyExists -SubKeyPath 'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
+            EvidenceType = 'RegistryKeyExistence'
+            ValueContentRead = $false
+        },
+        [pscustomobject]@{
+            Name = 'WindowsUpdateRebootRequired'
+            Present = [bool](Test-RegistrySubKeyExists -SubKeyPath 'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+            EvidenceType = 'RegistryKeyExistence'
+            ValueContentRead = $false
+        },
+        [pscustomobject]@{
+            Name = 'PendingFileRenameOperations'
+            Present = [bool](Test-RegistryValueExistsWithoutReading `
+                -SubKeyPath 'SYSTEM\CurrentControlSet\Control\Session Manager' `
+                -ValueName 'PendingFileRenameOperations')
+            EvidenceType = 'RegistryValueNameExistence'
+            ValueContentRead = $false
+        }
+    )
 }
 
-function Get-LocalServiceSnapshots {
-    param(
-        [Parameter(Mandatory = $true)]
-        [System.Collections.Generic.List[object]]$Failures
-    )
-
+function Read-ServiceSnapshots {
     $items = New-Object System.Collections.Generic.List[object]
-
+    $failures = New-Object System.Collections.Generic.List[object]
     foreach ($expected in $essentialServices) {
         try {
             $escapedName = $expected.Name.Replace("'", "''")
-            $service = Get-CimInstance `
-                -ClassName Win32_Service `
-                -Filter ("Name='" + $escapedName + "'") `
-                -ErrorAction Stop |
+            $service = Get-CimInstance -ClassName Win32_Service `
+                -Filter ("Name='" + $escapedName + "'") -ErrorAction Stop |
                 Select-Object -First 1
-
             if ($null -eq $service) {
                 $items.Add([pscustomobject]@{
-                    Name = $expected.Name
-                    DisplayName = $expected.DisplayName
-                    Found = $false
-                    State = 'Missing'
-                    StartMode = 'Unknown'
+                    Name = $expected.Name; DisplayName = $expected.DisplayName; Found = $false
+                    State = 'Missing'; StartMode = 'Unknown'
                 })
-                continue
             }
-
-            $items.Add([pscustomobject]@{
-                Name = [string]$service.Name
-                DisplayName = [string]$service.DisplayName
-                Found = $true
-                State = [string]$service.State
-                StartMode = [string]$service.StartMode
-            })
+            else {
+                $items.Add([pscustomobject]@{
+                    Name = [string]$service.Name; DisplayName = [string]$service.DisplayName; Found = $true
+                    State = [string]$service.State; StartMode = [string]$service.StartMode
+                })
+            }
         }
         catch {
-            $Failures.Add([pscustomobject]@{
-                Section = 'ServiceMetadata'
-                ErrorType = $_.Exception.GetType().Name
-            })
+            $failures.Add([pscustomobject]@{ Section = 'ServiceMetadata'; ErrorType = $_.Exception.GetType().Name })
             $items.Add([pscustomobject]@{
-                Name = $expected.Name
-                DisplayName = $expected.DisplayName
-                Found = $false
-                State = 'QueryFailed'
-                StartMode = 'Unknown'
+                Name = $expected.Name; DisplayName = $expected.DisplayName; Found = $false
+                State = 'QueryFailed'; StartMode = 'Unknown'
             })
         }
     }
-
-    return @($items.ToArray())
+    return [pscustomobject]@{ Items = @($items.ToArray()); Failures = @($failures.ToArray()) }
 }
 
-function Get-LocalUpdateEvents {
-    param(
-        [Parameter(Mandatory = $true)]
-        [System.Collections.Generic.List[object]]$Failures
-    )
-
+function Read-UpdateEvents {
     $items = New-Object System.Collections.Generic.List[object]
+    $failures = New-Object System.Collections.Generic.List[object]
     try {
         $events = @(Get-WinEvent `
             -FilterHashtable @{ LogName = 'Microsoft-Windows-WindowsUpdateClient/Operational' } `
-            -MaxEvents $eventLimit `
-            -ErrorAction Stop)
-
+            -MaxEvents $eventLimit -ErrorAction Stop)
         foreach ($event in $events) {
             $timeUtc = $null
-            if ($null -ne $event.TimeCreated) {
-                $timeUtc = $event.TimeCreated.ToUniversalTime().ToString('o')
-            }
-
+            if ($null -ne $event.TimeCreated) { $timeUtc = $event.TimeCreated.ToUniversalTime().ToString('o') }
             $items.Add([pscustomobject]@{
                 Id = [int64]$event.Id
                 Level = [int64]$event.Level
@@ -237,18 +180,16 @@ function Get-LocalUpdateEvents {
         }
     }
     catch {
-        $Failures.Add([pscustomobject]@{
+        $failures.Add([pscustomobject]@{
             Section = 'WindowsUpdateOperationalEvents'
             ErrorType = $_.Exception.GetType().Name
         })
     }
-
-    return @($items.ToArray())
+    return [pscustomobject]@{ Items = @($items.ToArray()); Failures = @($failures.ToArray()) }
 }
 
 function Get-LevelCategory {
     param([int64]$Level)
-
     switch ($Level) {
         1 { return 'Critical' }
         2 { return 'Error' }
@@ -260,22 +201,17 @@ function Get-LevelCategory {
 }
 
 function Get-AgeDays {
-    param(
-        [AllowNull()][string]$UtcText,
-        [Parameter(Mandatory = $true)][DateTime]$ReferenceUtc
-    )
-
+    param([AllowNull()][string]$UtcText, [Parameter(Mandatory = $true)][DateTime]$ReferenceUtc)
     if ([string]::IsNullOrWhiteSpace($UtcText)) { return $null }
     $parsed = [DateTime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+        [System.Globalization.DateTimeStyles]::AdjustToUniversal
     if (-not [DateTime]::TryParse(
         $UtcText,
         [System.Globalization.CultureInfo]::InvariantCulture,
-        [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal,
+        $styles,
         [ref]$parsed
-    )) {
-        return $null
-    }
-
+    )) { return $null }
     $age = [math]::Floor(($ReferenceUtc - $parsed.ToUniversalTime()).TotalDays)
     if ($age -lt 0) { return 0L }
     return [int64]$age
@@ -283,11 +219,10 @@ function Get-AgeDays {
 
 if ($Mode -ne 'Preview') { throw 'Only Preview mode is permitted in Fase 4C.' }
 if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'LOCALAPPDATA is unavailable.' }
-
 $allowedRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'KARV\LaptopDiagnostics'))
-$allowedDrive = [System.IO.Path]::GetPathRoot($allowedRoot).TrimEnd('\').ToUpperInvariant()
-if ($allowedDrive -ne 'C:') { throw 'LOCALAPPDATA diagnostics root must be on drive C:.' }
-
+if ([System.IO.Path]::GetPathRoot($allowedRoot).TrimEnd('\').ToUpperInvariant() -ne 'C:') {
+    throw 'LOCALAPPDATA diagnostics root must be on drive C:.'
+}
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = $allowedRoot }
 $validatedOutput = Get-ValidatedOutputPath -Path $OutputDirectory -AllowedRoot $allowedRoot
 [System.IO.Directory]::CreateDirectory($validatedOutput) | Out-Null
@@ -306,65 +241,54 @@ if ($PSBoundParameters.ContainsKey('InputSnapshot')) {
     }
 }
 else {
-    try {
-        $pendingIndicators = @(Get-LocalPendingIndicators)
-    }
+    try { $pendingIndicators = @(Read-PendingIndicators) }
     catch {
         $sectionFailures.Add([pscustomobject]@{
-            Section = 'PendingRebootIndicators'
-            ErrorType = $_.Exception.GetType().Name
+            Section = 'PendingRebootIndicators'; ErrorType = $_.Exception.GetType().Name
         })
     }
 
-    $serviceSnapshots = @(Get-LocalServiceSnapshots -Failures $sectionFailures)
-    $updateEvents = @(Get-LocalUpdateEvents -Failures $sectionFailures)
+    $serviceResult = Read-ServiceSnapshots
+    $serviceSnapshots = @($serviceResult.Items)
+    foreach ($failure in @($serviceResult.Failures)) { $sectionFailures.Add($failure) }
+
+    $eventResult = Read-UpdateEvents
+    $updateEvents = @($eventResult.Items)
+    foreach ($failure in @($eventResult.Failures)) { $sectionFailures.Add($failure) }
 }
 
-$normalizedIndicators = New-Object System.Collections.Generic.List[object]
-foreach ($indicator in $pendingIndicators) {
-    if ($null -eq $indicator) { continue }
-    $normalizedIndicators.Add([pscustomobject]@{
-        Name = [string](Get-OptionalPropertyValue -Object $indicator -Name 'Name')
-        Present = [bool](Get-OptionalPropertyValue -Object $indicator -Name 'Present')
-        EvidenceType = [string](Get-OptionalPropertyValue -Object $indicator -Name 'EvidenceType')
+$indicatorArray = @($pendingIndicators | Where-Object { $null -ne $_ } | ForEach-Object {
+    [pscustomobject]@{
+        Name = [string](Get-OptionalPropertyValue -Object $_ -Name 'Name')
+        Present = [bool](Get-OptionalPropertyValue -Object $_ -Name 'Present')
+        EvidenceType = [string](Get-OptionalPropertyValue -Object $_ -Name 'EvidenceType')
         ValueContentRead = $false
-    })
-}
-
-$normalizedServices = New-Object System.Collections.Generic.List[object]
-foreach ($service in $serviceSnapshots) {
-    if ($null -eq $service) { continue }
-    $normalizedServices.Add([pscustomobject]@{
-        Name = [string](Get-OptionalPropertyValue -Object $service -Name 'Name')
-        DisplayName = [string](Get-OptionalPropertyValue -Object $service -Name 'DisplayName')
-        Found = [bool](Get-OptionalPropertyValue -Object $service -Name 'Found')
-        State = [string](Get-OptionalPropertyValue -Object $service -Name 'State')
-        StartMode = [string](Get-OptionalPropertyValue -Object $service -Name 'StartMode')
-    })
-}
-
-$normalizedEvents = New-Object System.Collections.Generic.List[object]
-foreach ($event in $updateEvents) {
-    if ($null -eq $event) { continue }
-    $level = [int64](Get-OptionalPropertyValue -Object $event -Name 'Level')
-    $normalizedEvents.Add([pscustomobject]@{
-        Id = [int64](Get-OptionalPropertyValue -Object $event -Name 'Id')
+    }
+})
+$serviceArray = @($serviceSnapshots | Where-Object { $null -ne $_ } | ForEach-Object {
+    [pscustomobject]@{
+        Name = [string](Get-OptionalPropertyValue -Object $_ -Name 'Name')
+        DisplayName = [string](Get-OptionalPropertyValue -Object $_ -Name 'DisplayName')
+        Found = [bool](Get-OptionalPropertyValue -Object $_ -Name 'Found')
+        State = [string](Get-OptionalPropertyValue -Object $_ -Name 'State')
+        StartMode = [string](Get-OptionalPropertyValue -Object $_ -Name 'StartMode')
+    }
+})
+$eventArray = @($updateEvents | Where-Object { $null -ne $_ } | ForEach-Object {
+    $level = [int64](Get-OptionalPropertyValue -Object $_ -Name 'Level')
+    [pscustomobject]@{
+        Id = [int64](Get-OptionalPropertyValue -Object $_ -Name 'Id')
         Level = $level
         LevelCategory = Get-LevelCategory -Level $level
-        LevelDisplayName = [string](Get-OptionalPropertyValue -Object $event -Name 'LevelDisplayName')
-        ProviderName = [string](Get-OptionalPropertyValue -Object $event -Name 'ProviderName')
-        TimeCreatedUtc = [string](Get-OptionalPropertyValue -Object $event -Name 'TimeCreatedUtc')
+        LevelDisplayName = [string](Get-OptionalPropertyValue -Object $_ -Name 'LevelDisplayName')
+        ProviderName = [string](Get-OptionalPropertyValue -Object $_ -Name 'ProviderName')
+        TimeCreatedUtc = [string](Get-OptionalPropertyValue -Object $_ -Name 'TimeCreatedUtc')
         MessageRead = $false
-    })
-}
-
-$indicatorArray = @($normalizedIndicators.ToArray())
-$serviceArray = @($normalizedServices.ToArray())
-$eventArray = @($normalizedEvents.ToArray() | Sort-Object TimeCreatedUtc -Descending)
+    }
+} | Sort-Object TimeCreatedUtc -Descending)
 
 $pendingIndicatorCount = [int64]@($indicatorArray | Where-Object { $_.Present }).Count
 $pendingReboot = [bool]($pendingIndicatorCount -gt 0)
-
 $componentsExpected = [int64]$essentialServices.Count
 $componentsFound = [int64]@($serviceArray | Where-Object { $_.Found }).Count
 $componentsRunning = [int64]@($serviceArray | Where-Object { $_.Found -and $_.State -eq 'Running' }).Count
@@ -386,85 +310,50 @@ $eventsOlderThan90Days = 0L
 $eventsUnknownAge = 0L
 $lastEventAgeDays = $null
 $lastErrorAgeDays = $null
-
 foreach ($event in $eventArray) {
     $ageDays = Get-AgeDays -UtcText $event.TimeCreatedUtc -ReferenceUtc $nowUtc
-    if ($null -eq $ageDays) {
-        $eventsUnknownAge++
-        continue
-    }
-
-    if ($null -eq $lastEventAgeDays -or $ageDays -lt $lastEventAgeDays) {
-        $lastEventAgeDays = [int64]$ageDays
-    }
-    if (($event.LevelCategory -eq 'Critical' -or $event.LevelCategory -eq 'Error') -and
+    if ($null -eq $ageDays) { $eventsUnknownAge++; continue }
+    if ($null -eq $lastEventAgeDays -or $ageDays -lt $lastEventAgeDays) { $lastEventAgeDays = [int64]$ageDays }
+    if (($event.LevelCategory -in @('Critical', 'Error')) -and
         ($null -eq $lastErrorAgeDays -or $ageDays -lt $lastErrorAgeDays)) {
         $lastErrorAgeDays = [int64]$ageDays
     }
-
-    if ($ageDays -le 7) {
-        $eventsLast7Days++
-        $eventsLast30Days++
-    }
-    elseif ($ageDays -le 30) {
-        $eventsLast30Days++
-    }
-    elseif ($ageDays -le 90) {
-        $events31To90Days++
-    }
-    else {
-        $eventsOlderThan90Days++
-    }
+    if ($ageDays -le 7) { $eventsLast7Days++; $eventsLast30Days++ }
+    elseif ($ageDays -le 30) { $eventsLast30Days++ }
+    elseif ($ageDays -le 90) { $events31To90Days++ }
+    else { $eventsOlderThan90Days++ }
 }
 
 $diagnosticClassification = 'Operational'
 if ($componentsDisabled -gt 0 -or $componentsMissing -gt 0 -or $serviceQueryFailures -gt 0) {
     $diagnosticClassification = 'DegradedReview'
 }
-elseif ($sectionFailures.Count -gt 0) {
-    $diagnosticClassification = 'InsufficientDataReview'
-}
-elseif ($pendingReboot) {
-    $diagnosticClassification = 'RebootPendingReview'
-}
+elseif ($sectionFailures.Count -gt 0) { $diagnosticClassification = 'InsufficientDataReview' }
+elseif ($pendingReboot) { $diagnosticClassification = 'RebootPendingReview' }
 
 $builder = New-Object System.Text.StringBuilder
-[void]$builder.AppendLine('<!doctype html>')
-[void]$builder.AppendLine('<html lang="pt-BR"><head><meta charset="utf-8">')
-[void]$builder.AppendLine('<meta name="viewport" content="width=device-width, initial-scale=1">')
-[void]$builder.AppendLine('<title>KARV — Diagnóstico operacional do Windows Update</title>')
-[void]$builder.AppendLine('<style>')
-[void]$builder.AppendLine('body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17212b}main{max-width:1500px;margin:0 auto;padding:28px}header,section{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:20px;margin-bottom:18px}h1{margin:0 0 8px;font-size:26px}h2{margin:0 0 14px;font-size:20px}.warning{background:#fff4d6;border-left:5px solid #c78a00;padding:12px;margin-top:14px}.metrics{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}.metric{background:#edf2f7;border-radius:8px;padding:10px 14px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #dfe5eb;padding:9px;word-break:break-word}th{background:#edf2f7;position:sticky;top:0}.footer{font-size:12px;color:#5b6773}</style>')
-[void]$builder.AppendLine('</head><body><main>')
-[void]$builder.AppendLine('<header><h1>KARV — Diagnóstico operacional do Windows Update</h1>')
-[void]$builder.AppendLine('<p>Diagnóstico local e somente leitura. Serviços parados não são considerados defeito automaticamente, pois alguns componentes operam sob demanda.</p>')
-[void]$builder.AppendLine('<div class="warning"><strong>Sem ações.</strong> Este painel não reinicia, atualiza, repara ou reconfigura o Windows.</div>')
-[void]$builder.AppendLine('<div class="metrics">')
-[void]$builder.AppendLine('<div class="metric"><strong>Classificação:</strong> ' + (Convert-ToHtmlText $diagnosticClassification) + '</div>')
-[void]$builder.AppendLine('<div class="metric"><strong>Indicadores pendentes:</strong> ' + $pendingIndicatorCount + '</div>')
-[void]$builder.AppendLine('<div class="metric"><strong>Componentes encontrados:</strong> ' + $componentsFound + ' / ' + $componentsExpected + '</div>')
-[void]$builder.AppendLine('<div class="metric"><strong>Eventos locais:</strong> ' + $eventArray.Count + '</div>')
-[void]$builder.AppendLine('</div></header>')
+[void]$builder.AppendLine('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">')
+[void]$builder.AppendLine('<title>KARV — Diagnóstico operacional do Windows Update</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17212b}main{max-width:1500px;margin:auto;padding:28px}header,section{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:20px;margin-bottom:18px}.metrics{display:flex;gap:12px;flex-wrap:wrap}.metric{background:#edf2f7;border-radius:8px;padding:10px 14px}.warning{background:#fff4d6;border-left:5px solid #c78a00;padding:12px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #dfe5eb;padding:9px;word-break:break-word}th{background:#edf2f7}.footer{font-size:12px;color:#5b6773}</style></head><body><main>')
+[void]$builder.AppendLine('<header><h1>KARV — Diagnóstico operacional do Windows Update</h1><p>Somente leitura. Serviços parados não são considerados defeito automaticamente porque alguns componentes operam sob demanda.</p><div class="warning"><strong>Sem ações.</strong> Nenhuma correção ou reinicialização está disponível.</div><div class="metrics">')
+[void]$builder.AppendLine('<div class="metric"><strong>Classificação:</strong> ' + (Convert-ToHtmlText $diagnosticClassification) + '</div><div class="metric"><strong>Indicadores:</strong> ' + $pendingIndicatorCount + '</div><div class="metric"><strong>Componentes:</strong> ' + $componentsFound + ' / ' + $componentsExpected + '</div><div class="metric"><strong>Eventos:</strong> ' + $eventArray.Count + '</div></div></header>')
 
 [void]$builder.AppendLine('<section><h2>Indicadores de reinicialização pendente</h2><div class="table-wrap"><table><thead><tr><th>Indicador</th><th>Presente</th><th>Evidência</th><th>Conteúdo lido</th></tr></thead><tbody>')
-foreach ($indicator in $indicatorArray) {
-    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $indicator.Name) + '</td><td>' + (Convert-ToHtmlText $indicator.Present) + '</td><td>' + (Convert-ToHtmlText $indicator.EvidenceType) + '</td><td>' + (Convert-ToHtmlText $indicator.ValueContentRead) + '</td></tr>')
+foreach ($item in $indicatorArray) {
+    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $item.Name) + '</td><td>' + $item.Present + '</td><td>' + (Convert-ToHtmlText $item.EvidenceType) + '</td><td>false</td></tr>')
 }
 [void]$builder.AppendLine('</tbody></table></div></section>')
 
 [void]$builder.AppendLine('<section><h2>Componentes essenciais</h2><div class="table-wrap"><table><thead><tr><th>Componente</th><th>Nome técnico</th><th>Encontrado</th><th>Estado</th><th>Inicialização</th></tr></thead><tbody>')
-foreach ($service in $serviceArray) {
-    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $service.DisplayName) + '</td><td>' + (Convert-ToHtmlText $service.Name) + '</td><td>' + (Convert-ToHtmlText $service.Found) + '</td><td>' + (Convert-ToHtmlText $service.State) + '</td><td>' + (Convert-ToHtmlText $service.StartMode) + '</td></tr>')
+foreach ($item in $serviceArray) {
+    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $item.DisplayName) + '</td><td>' + (Convert-ToHtmlText $item.Name) + '</td><td>' + $item.Found + '</td><td>' + (Convert-ToHtmlText $item.State) + '</td><td>' + (Convert-ToHtmlText $item.StartMode) + '</td></tr>')
 }
 [void]$builder.AppendLine('</tbody></table></div></section>')
 
 [void]$builder.AppendLine('<section><h2>Eventos operacionais locais</h2><div class="table-wrap"><table><thead><tr><th>Data UTC</th><th>Nível</th><th>ID</th><th>Provedor</th><th>Mensagem lida</th></tr></thead><tbody>')
-foreach ($event in $eventArray) {
-    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $event.TimeCreatedUtc) + '</td><td>' + (Convert-ToHtmlText $event.LevelCategory) + '</td><td>' + (Convert-ToHtmlText $event.Id) + '</td><td>' + (Convert-ToHtmlText $event.ProviderName) + '</td><td>' + (Convert-ToHtmlText $event.MessageRead) + '</td></tr>')
+foreach ($item in $eventArray) {
+    [void]$builder.AppendLine('<tr><td>' + (Convert-ToHtmlText $item.TimeCreatedUtc) + '</td><td>' + (Convert-ToHtmlText $item.LevelCategory) + '</td><td>' + $item.Id + '</td><td>' + (Convert-ToHtmlText $item.ProviderName) + '</td><td>false</td></tr>')
 }
-[void]$builder.AppendLine('</tbody></table></div></section>')
-[void]$builder.AppendLine('<section class="footer">Nenhum serviço foi iniciado, parado, reiniciado ou reconfigurado. Nenhuma atualização, correção ou reinicialização foi executada.</section>')
-[void]$builder.AppendLine('</main></body></html>')
+[void]$builder.AppendLine('</tbody></table></div></section><section class="footer">Nenhum serviço, atualização, política ou reinicialização foi alterado.</section></main></body></html>')
 
 $timestamp = $nowUtc.ToString('yyyyMMdd-HHmmss')
 $manifestPath = Join-Path $validatedOutput ('karv-windows-update-operational-local-manifest-' + $timestamp + '.json')
@@ -473,82 +362,42 @@ $htmlPath = Join-Path $validatedOutput ('karv-windows-update-operational-panel-'
 
 $manifest = [pscustomobject]@{
     Warning = 'SENSITIVE LOCAL DATA - DO NOT SHARE OR COMMIT'
-    Collector = $collectorName
-    ScriptVersion = $scriptVersion
-    GeneratedAtUtc = $nowUtc.ToString('o')
-    Mode = $Mode
-    SensitiveLocalData = $true
-    LocalOnly = $true
+    Collector = $collectorName; ScriptVersion = $scriptVersion; GeneratedAtUtc = $nowUtc.ToString('o')
+    Mode = $Mode; SensitiveLocalData = $true; LocalOnly = $true
     DiagnosticClassification = $diagnosticClassification
-    PendingIndicators = $indicatorArray
-    Services = $serviceArray
-    Events = $eventArray
+    PendingIndicators = $indicatorArray; Services = $serviceArray; Events = $eventArray
     SectionFailures = $sectionFailures.ToArray()
 }
-
 $summary = [pscustomobject]@{
-    Collector = $collectorName
-    ScriptVersion = $scriptVersion
-    GeneratedAtUtc = $nowUtc.ToString('o')
-    Mode = $Mode
+    Collector = $collectorName; ScriptVersion = $scriptVersion; GeneratedAtUtc = $nowUtc.ToString('o'); Mode = $Mode
     Privacy = [pscustomobject]@{
-        SummarySanitized = $true
-        SummaryContainsIndicatorNames = $false
-        SummaryContainsServiceNames = $false
-        SummaryContainsEventIds = $false
-        SummaryContainsEventProviders = $false
-        SummaryContainsEventMessages = $false
-        SummaryContainsExactDates = $false
-        SummaryContainsPaths = $false
-        DetailedManifestContainsSensitiveLocalData = $true
-        DetailedManifestLocalOnly = $true
-        HtmlContainsSensitiveLocalData = $true
-        HtmlLocalOnly = $true
-        PendingPathValuesRead = $false
-        ExcludedDriveEAccessed = $false
+        SummarySanitized = $true; SummaryContainsIndicatorNames = $false; SummaryContainsServiceNames = $false
+        SummaryContainsEventIds = $false; SummaryContainsEventProviders = $false; SummaryContainsEventMessages = $false
+        SummaryContainsExactDates = $false; SummaryContainsPaths = $false
+        DetailedManifestContainsSensitiveLocalData = $true; DetailedManifestLocalOnly = $true
+        HtmlContainsSensitiveLocalData = $true; HtmlLocalOnly = $true
+        PendingPathValuesRead = $false; ExcludedDriveEAccessed = $false
     }
     Scope = [pscustomobject]@{
-        RegistryReadOnly = $true
-        PendingIndicatorsExpected = 3
-        ServiceMetadataReadOnly = $true
-        EssentialComponentsExpected = $componentsExpected
-        EventMetadataReadOnly = $true
-        EventLimit = $eventLimit
-        EventMessagesRead = $false
-        UpdateSearchPerformed = $false
-        UpdatesDownloaded = $false
-        UpdatesInstalled = $false
-        ServicesChanged = $false
-        RebootTriggered = $false
-        DismExecuted = $false
-        SfcExecuted = $false
-        NetworkCollected = $false
-        ActionsAvailable = $false
+        RegistryReadOnly = $true; PendingIndicatorsExpected = 3
+        ServiceMetadataReadOnly = $true; EssentialComponentsExpected = $componentsExpected
+        EventMetadataReadOnly = $true; EventLimit = $eventLimit; EventMessagesRead = $false
+        UpdateSearchPerformed = $false; UpdatesDownloaded = $false; UpdatesInstalled = $false
+        ServicesChanged = $false; RebootTriggered = $false; DismExecuted = $false; SfcExecuted = $false
+        NetworkCollected = $false; ActionsAvailable = $false
     }
     Summary = [pscustomobject]@{
         DiagnosticClassification = $diagnosticClassification
-        PendingReboot = $pendingReboot
-        PendingRebootIndicators = $pendingIndicatorCount
-        ComponentsExpected = $componentsExpected
-        ComponentsFound = $componentsFound
-        ComponentsRunning = $componentsRunning
-        ComponentsStopped = $componentsStopped
-        ComponentsDisabled = $componentsDisabled
-        ComponentsMissing = $componentsMissing
+        PendingReboot = $pendingReboot; PendingRebootIndicators = $pendingIndicatorCount
+        ComponentsExpected = $componentsExpected; ComponentsFound = $componentsFound
+        ComponentsRunning = $componentsRunning; ComponentsStopped = $componentsStopped
+        ComponentsDisabled = $componentsDisabled; ComponentsMissing = $componentsMissing
         ServiceQueryFailures = $serviceQueryFailures
-        EventEntries = [int64]$eventArray.Count
-        EventCritical = $eventCritical
-        EventErrors = $eventErrors
-        EventWarnings = $eventWarnings
-        EventInformation = $eventInformation
-        EventOther = $eventOther
-        EventsLast7Days = [int64]$eventsLast7Days
-        EventsLast30Days = [int64]$eventsLast30Days
-        Events31To90Days = [int64]$events31To90Days
-        EventsOlderThan90Days = [int64]$eventsOlderThan90Days
-        EventsUnknownAge = [int64]$eventsUnknownAge
-        LastEventAgeDays = $lastEventAgeDays
-        LastErrorAgeDays = $lastErrorAgeDays
+        EventEntries = [int64]$eventArray.Count; EventCritical = $eventCritical; EventErrors = $eventErrors
+        EventWarnings = $eventWarnings; EventInformation = $eventInformation; EventOther = $eventOther
+        EventsLast7Days = [int64]$eventsLast7Days; EventsLast30Days = [int64]$eventsLast30Days
+        Events31To90Days = [int64]$events31To90Days; EventsOlderThan90Days = [int64]$eventsOlderThan90Days
+        EventsUnknownAge = [int64]$eventsUnknownAge; LastEventAgeDays = $lastEventAgeDays; LastErrorAgeDays = $lastErrorAgeDays
     }
     SectionFailures = $sectionFailures.ToArray()
 }
@@ -560,22 +409,13 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 [pscustomobject]@{
     Status = if ($sectionFailures.Count -eq 0) { 'Passed' } else { 'Partial' }
-    Collector = $collectorName
-    ScriptVersion = $scriptVersion
-    Mode = $Mode
+    Collector = $collectorName; ScriptVersion = $scriptVersion; Mode = $Mode
     DiagnosticClassification = $diagnosticClassification
-    PendingReboot = $pendingReboot
-    PendingRebootIndicators = $pendingIndicatorCount
-    ComponentsExpected = $componentsExpected
-    ComponentsFound = $componentsFound
-    ComponentsRunning = $componentsRunning
-    ComponentsStopped = $componentsStopped
-    ComponentsDisabled = $componentsDisabled
-    ComponentsMissing = $componentsMissing
-    ServiceQueryFailures = $serviceQueryFailures
-    EventEntries = [int64]$eventArray.Count
-    EventErrors = $eventErrors
-    EventWarnings = $eventWarnings
-    SectionFailures = [int64]$sectionFailures.Count
-    ReportsCreated = 3
+    PendingReboot = $pendingReboot; PendingRebootIndicators = $pendingIndicatorCount
+    ComponentsExpected = $componentsExpected; ComponentsFound = $componentsFound
+    ComponentsRunning = $componentsRunning; ComponentsStopped = $componentsStopped
+    ComponentsDisabled = $componentsDisabled; ComponentsMissing = $componentsMissing
+    ServiceQueryFailures = $serviceQueryFailures; EventEntries = [int64]$eventArray.Count
+    EventErrors = $eventErrors; EventWarnings = $eventWarnings
+    SectionFailures = [int64]$sectionFailures.Count; ReportsCreated = 3
 }
