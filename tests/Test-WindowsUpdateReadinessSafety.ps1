@@ -200,9 +200,11 @@ try {
     $manifestText = [System.IO.File]::ReadAllText($manifestFile.FullName)
     $summaryText = [System.IO.File]::ReadAllText($summaryFile.FullName)
     $html = [System.IO.File]::ReadAllText($htmlFile.FullName)
+    $manifest = $manifestText | ConvertFrom-Json
     $summary = $summaryText | ConvertFrom-Json
+    $manifestTitles = @($manifest.UpdateHistory | ForEach-Object { [string]$_.Title })
 
-    Assert-Condition -Condition ($manifestText.Contains('Synthetic Update <One>')) `
+    Assert-Condition -Condition ($manifestTitles -contains 'Synthetic Update <One>') `
         -Message 'Detailed manifest does not contain local update details.'
     Assert-Condition -Condition ($html.Contains('Synthetic Update &lt;One&gt;')) `
         -Message 'HTML escaping was not applied.'
