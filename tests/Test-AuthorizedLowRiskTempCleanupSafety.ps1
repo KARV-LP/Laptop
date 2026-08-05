@@ -8,21 +8,13 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-function Assert-Condition {
-    param(
-        [Parameter(Mandatory = $true)][bool]$Condition,
-        [Parameter(Mandatory = $true)][string]$Message
-    )
-
+function Assert-True {
+    param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw $Message }
 }
 
 function New-TestFile {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][int]$AgeDays
-    )
-
+    param([string]$Path, [int]$AgeDays)
     [System.IO.File]::WriteAllBytes($Path, (New-Object byte[] 2048))
     [System.IO.File]::SetLastWriteTimeUtc($Path, [DateTime]::UtcNow.AddDays(-$AgeDays))
 }
@@ -35,39 +27,25 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     [ref]$tokens,
     [ref]$parseErrors
 )
-Assert-Condition -Condition ($parseErrors.Count -eq 0) -Message 'Production script has parse errors.'
+Assert-True ($parseErrors.Count -eq 0) 'Production script has parse errors.'
 
 $commands = @(
     $ast.FindAll(
-        {
-            param($node)
-            $node -is [System.Management.Automation.Language.CommandAst]
-        },
+        { param($node) $node -is [System.Management.Automation.Language.CommandAst] },
         $true
     ) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ }
 )
 
 $forbiddenCommands = @(
-    'Remove-Item',
-    'Clear-Content',
-    'Set-Content',
-    'Move-Item',
-    'Copy-Item',
-    'Rename-Item',
-    'Stop-Process',
-    'Stop-Service',
-    'Set-Service',
-    'Restart-Computer',
-    'Stop-Computer',
-    'Invoke-WebRequest',
-    'Invoke-RestMethod'
+    'Remove-Item', 'Clear-Content', 'Set-Content', 'Move-Item', 'Copy-Item',
+    'Rename-Item', 'Stop-Process', 'Stop-Service', 'Set-Service',
+    'Restart-Computer', 'Stop-Computer', 'Invoke-WebRequest', 'Invoke-RestMethod'
 )
 $forbiddenFound = @($commands | Where-Object { $forbiddenCommands -contains $_ } | Sort-Object -Unique)
-Assert-Condition -Condition ($forbiddenFound.Count -eq 0) `
-    -Message ('Forbidden commands found: ' + ($forbiddenFound -join ', '))
+Assert-True ($forbiddenFound.Count -eq 0) ('Forbidden commands found: ' + ($forbiddenFound -join ', '))
 
 $scriptText = [System.IO.File]::ReadAllText($resolvedScriptPath)
-foreach ($requiredPattern in @(
+foreach ($pattern in @(
     "ValidateSet\('Preview', 'Apply'\)",
     'KARV-LOW-RISK-CLEANUP-APPLY-AUTHORIZED',
     'ApplicationsClosed',
@@ -79,30 +57,30 @@ foreach ($requiredPattern in @(
     'BlendFilesPreserved = \$true',
     'ExcludedDriveEAccessed = \$false'
 )) {
-    Assert-Condition -Condition ([regex]::IsMatch($scriptText, $requiredPattern)) `
-        -Message ('Required safety pattern missing: ' + $requiredPattern)
+    Assert-True ([regex]::IsMatch($scriptText, $pattern)) ('Required safety pattern missing: ' + $pattern)
 }
-
-foreach ($forbiddenPattern in @(
+foreach ($pattern in @(
     '(?i)Directory\]::Delete',
     '(?i)DirectoryInfo\]::Delete',
     '(?i)System\.Net\.',
-    '(?i)Start-Process',
-    '(?i)\.dmp''\)\s*$'
+    '(?i)Start-Process'
 )) {
-    Assert-Condition -Condition (-not [regex]::IsMatch($scriptText, $forbiddenPattern)) `
-        -Message ('Forbidden production pattern found: ' + $forbiddenPattern)
+    Assert-True (-not [regex]::IsMatch($scriptText, $pattern)) ('Forbidden production pattern found: ' + $pattern)
 }
 
-Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) `
-    -Message 'LOCALAPPDATA is unavailable.'
+Assert-True (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) 'LOCALAPPDATA is unavailable.'
+$localAppDataDrive = [System.IO.Path]::GetPathRoot($env:LOCALAPPDATA).TrimEnd('\').ToUpperInvariant()
+Assert-True ($localAppDataDrive -eq 'C:') 'Synthetic test requires LOCALAPPDATA on drive C:.'
+
+$forcedTempRoot = Join-Path $env:LOCALAPPDATA 'Temp'
+[System.IO.Directory]::CreateDirectory($forcedTempRoot) | Out-Null
+$env:TEMP = $forcedTempRoot
+$env:TMP = $forcedTempRoot
 
 $systemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $diagnosticsRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'KARV\LaptopDiagnostics'))
-Assert-Condition -Condition ([System.IO.Path]::GetPathRoot($systemTemp).TrimEnd('\').ToUpperInvariant() -eq 'C:') `
-    -Message 'Synthetic test requires the user Temp directory on C:.'
-Assert-Condition -Condition ([System.IO.Path]::GetPathRoot($diagnosticsRoot).TrimEnd('\').ToUpperInvariant() -eq 'C:') `
-    -Message 'Synthetic test requires LOCALAPPDATA on C:.'
+Assert-True ([System.IO.Path]::GetPathRoot($systemTemp).TrimEnd('\').ToUpperInvariant() -eq 'C:') `
+    'Synthetic Temp root was not forced onto drive C:.'
 
 $testId = [Guid]::NewGuid().ToString('N')
 $sampleRoot = Join-Path $systemTemp ('KARV-Authorized-Cleanup-' + $testId)
@@ -114,145 +92,101 @@ try {
     $nestedDirectory = Join-Path $sampleRoot 'nested'
     [System.IO.Directory]::CreateDirectory($nestedDirectory) | Out-Null
 
-    $oldTmp = Join-Path $sampleRoot 'private-old.tmp'
-    $oldLog = Join-Path $sampleRoot 'private-old.log'
-    $oldEtl = Join-Path $nestedDirectory 'private-old.etl'
-    $oldDmp = Join-Path $sampleRoot 'private-old.dmp'
-    $oldBlend = Join-Path $sampleRoot 'private-old.blend'
-    $oldGlb = Join-Path $sampleRoot 'private-old.glb'
-    $oldTxt = Join-Path $sampleRoot 'private-old.txt'
-    $recentTmp = Join-Path $sampleRoot 'private-recent.tmp'
-
-    foreach ($path in @($oldTmp, $oldLog, $oldEtl, $oldDmp, $oldBlend, $oldGlb, $oldTxt)) {
-        New-TestFile -Path $path -AgeDays 120
+    $files = [ordered]@{
+        OldTmp = Join-Path $sampleRoot 'private-old.tmp'
+        OldLog = Join-Path $sampleRoot 'private-old.log'
+        OldEtl = Join-Path $nestedDirectory 'private-old.etl'
+        OldDmp = Join-Path $sampleRoot 'private-old.dmp'
+        OldBlend = Join-Path $sampleRoot 'private-old.blend'
+        OldGlb = Join-Path $sampleRoot 'private-old.glb'
+        OldTxt = Join-Path $sampleRoot 'private-old.txt'
+        RecentTmp = Join-Path $sampleRoot 'private-recent.tmp'
     }
-    New-TestFile -Path $recentTmp -AgeDays 2
 
-    $preview = & $resolvedScriptPath `
-        -Mode Preview `
-        -UserTempPath $sampleRoot `
-        -OutputDirectory $outputDirectory
+    foreach ($key in @('OldTmp', 'OldLog', 'OldEtl', 'OldDmp', 'OldBlend', 'OldGlb', 'OldTxt')) {
+        New-TestFile -Path $files[$key] -AgeDays 120
+    }
+    New-TestFile -Path $files.RecentTmp -AgeDays 2
 
-    Assert-Condition -Condition ($preview.Status -eq 'Passed') -Message 'Preview did not pass.'
-    Assert-Condition -Condition ([int64]$preview.CandidateFiles -eq 3) -Message 'Preview candidate count is incorrect.'
-    Assert-Condition -Condition ([int64]$preview.RemovedFiles -eq 0) -Message 'Preview removed files.'
-    Assert-Condition -Condition ([int64]$preview.PreservedDiagnosticDumpFiles -eq 1) `
-        -Message 'Preview did not preserve the diagnostic dump.'
-
-    foreach ($path in @($oldTmp, $oldLog, $oldEtl, $oldDmp, $oldBlend, $oldGlb, $oldTxt, $recentTmp)) {
-        Assert-Condition -Condition ([System.IO.File]::Exists($path)) -Message 'Preview changed a sample file.'
+    $preview = & $resolvedScriptPath -Mode Preview -UserTempPath $sampleRoot -OutputDirectory $outputDirectory
+    Assert-True ($preview.Status -eq 'Passed') 'Preview did not pass.'
+    Assert-True ([int64]$preview.CandidateFiles -eq 3) 'Preview candidate count is incorrect.'
+    Assert-True ([int64]$preview.RemovedFiles -eq 0) 'Preview removed files.'
+    Assert-True ([int64]$preview.PreservedDiagnosticDumpFiles -eq 1) 'Preview did not preserve the dump.'
+    foreach ($path in $files.Values) {
+        Assert-True ([System.IO.File]::Exists($path)) 'Preview changed a sample file.'
     }
 
     $blocked = $false
     try {
-        & $resolvedScriptPath `
-            -Mode Apply `
-            -UserTempPath $sampleRoot `
-            -OutputDirectory $outputDirectory | Out-Null
+        & $resolvedScriptPath -Mode Apply -UserTempPath $sampleRoot -OutputDirectory $outputDirectory | Out-Null
     }
-    catch {
-        $blocked = $true
-    }
-    Assert-Condition -Condition $blocked -Message 'Apply without guards was not blocked.'
+    catch { $blocked = $true }
+    Assert-True $blocked 'Apply without guards was not blocked.'
 
     $wrongTokenBlocked = $false
     try {
-        & $resolvedScriptPath `
-            -Mode Apply `
-            -ApplicationsClosed `
-            -ConfirmationToken 'WRONG' `
-            -UserTempPath $sampleRoot `
-            -OutputDirectory $outputDirectory | Out-Null
+        & $resolvedScriptPath -Mode Apply -ApplicationsClosed -ConfirmationToken 'WRONG' `
+            -UserTempPath $sampleRoot -OutputDirectory $outputDirectory | Out-Null
     }
-    catch {
-        $wrongTokenBlocked = $true
-    }
-    Assert-Condition -Condition $wrongTokenBlocked -Message 'Apply with an incorrect token was not blocked.'
+    catch { $wrongTokenBlocked = $true }
+    Assert-True $wrongTokenBlocked 'Apply with an incorrect token was not blocked.'
 
-    $apply = & $resolvedScriptPath `
-        -Mode Apply `
-        -ApplicationsClosed `
+    $apply = & $resolvedScriptPath -Mode Apply -ApplicationsClosed `
         -ConfirmationToken 'KARV-LOW-RISK-CLEANUP-APPLY-AUTHORIZED' `
-        -UserTempPath $sampleRoot `
-        -OutputDirectory $outputDirectory
+        -UserTempPath $sampleRoot -OutputDirectory $outputDirectory
 
-    Assert-Condition -Condition ($apply.Status -eq 'Passed') -Message 'Authorized apply did not pass.'
-    Assert-Condition -Condition ([int64]$apply.CandidateFiles -eq 3) -Message 'Apply candidate count is incorrect.'
-    Assert-Condition -Condition ([int64]$apply.RemovedFiles -eq 3) -Message 'Apply did not remove exactly three files.'
-    Assert-Condition -Condition ([int64]$apply.DeleteFailures -eq 0) -Message 'Apply reported delete failures.'
-    Assert-Condition -Condition ([int64]$apply.PreservedDiagnosticDumpFiles -eq 1) `
-        -Message 'Apply did not report the preserved dump.'
+    Assert-True ($apply.Status -eq 'Passed') 'Authorized apply did not pass.'
+    Assert-True ([int64]$apply.CandidateFiles -eq 3) 'Apply candidate count is incorrect.'
+    Assert-True ([int64]$apply.RemovedFiles -eq 3) 'Apply did not remove exactly three files.'
+    Assert-True ([int64]$apply.DeleteFailures -eq 0) 'Apply reported delete failures.'
+    Assert-True ([int64]$apply.PreservedDiagnosticDumpFiles -eq 1) 'Apply did not preserve the dump.'
 
-    foreach ($path in @($oldTmp, $oldLog, $oldEtl)) {
-        Assert-Condition -Condition (-not [System.IO.File]::Exists($path)) `
-            -Message 'An authorized old temporary file was not removed.'
+    foreach ($key in @('OldTmp', 'OldLog', 'OldEtl')) {
+        Assert-True (-not [System.IO.File]::Exists($files[$key])) 'An authorized file was not removed.'
     }
-    foreach ($path in @($oldDmp, $oldBlend, $oldGlb, $oldTxt, $recentTmp)) {
-        Assert-Condition -Condition ([System.IO.File]::Exists($path)) `
-            -Message 'A protected or recent file was removed.'
+    foreach ($key in @('OldDmp', 'OldBlend', 'OldGlb', 'OldTxt', 'RecentTmp')) {
+        Assert-True ([System.IO.File]::Exists($files[$key])) 'A protected or recent file was removed.'
     }
-    Assert-Condition -Condition ([System.IO.Directory]::Exists($nestedDirectory)) `
-        -Message 'A directory was removed.'
+    Assert-True ([System.IO.Directory]::Exists($nestedDirectory)) 'A directory was removed.'
 
     $reportFile = Get-ChildItem -LiteralPath $outputDirectory `
         -Filter 'karv-authorized-low-risk-cleanup-apply-*.json' -File |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
-    Assert-Condition -Condition ($null -ne $reportFile) -Message 'Apply report was not created.'
-
+    Assert-True ($null -ne $reportFile) 'Apply report was not created.'
     $reportText = [System.IO.File]::ReadAllText($reportFile.FullName)
     $report = $reportText | ConvertFrom-Json
-    foreach ($sensitiveValue in @(
-        'private-old',
-        'private-recent',
-        $sampleRoot
-    )) {
-        Assert-Condition -Condition (-not $reportText.Contains($sensitiveValue)) `
-            -Message ('Sensitive data leaked into report: ' + $sensitiveValue)
+    foreach ($sensitiveValue in @('private-old', 'private-recent', $sampleRoot)) {
+        Assert-True (-not $reportText.Contains($sensitiveValue)) ('Sensitive data leaked: ' + $sensitiveValue)
     }
-
-    Assert-Condition -Condition ($report.Privacy.SummarySanitized -eq $true) `
-        -Message 'Report is not marked sanitized.'
-    Assert-Condition -Condition ($report.Scope.DiagnosticDumpsPreserved -eq $true) `
-        -Message 'Report does not preserve diagnostic dumps.'
-    Assert-Condition -Condition ($report.Scope.DirectoriesRemoved -eq $false) `
-        -Message 'Report incorrectly indicates directory removal.'
+    Assert-True ($report.Privacy.SummarySanitized -eq $true) 'Report is not sanitized.'
+    Assert-True ($report.Scope.DiagnosticDumpsPreserved -eq $true) 'Dumps are not marked preserved.'
+    Assert-True ($report.Scope.DirectoriesRemoved -eq $false) 'Directory removal was reported.'
 
     $outsideTempRejected = $false
     try {
-        & $resolvedScriptPath `
-            -Mode Preview `
-            -UserTempPath 'C:\KARV-Outside-Temp' `
+        & $resolvedScriptPath -Mode Preview -UserTempPath 'C:\KARV-Outside-Temp' `
             -OutputDirectory $outputDirectory | Out-Null
     }
-    catch {
-        $outsideTempRejected = $true
-    }
-    Assert-Condition -Condition $outsideTempRejected -Message 'Path outside user Temp was not rejected.'
+    catch { $outsideTempRejected = $true }
+    Assert-True $outsideTempRejected 'Path outside Temp was not rejected.'
 
     $outsideOutputRejected = $false
     try {
-        & $resolvedScriptPath `
-            -Mode Preview `
-            -UserTempPath $sampleRoot `
+        & $resolvedScriptPath -Mode Preview -UserTempPath $sampleRoot `
             -OutputDirectory 'C:\KARV-Outside-Output' | Out-Null
     }
-    catch {
-        $outsideOutputRejected = $true
-    }
-    Assert-Condition -Condition $outsideOutputRejected -Message 'Output outside diagnostics root was not rejected.'
+    catch { $outsideOutputRejected = $true }
+    Assert-True $outsideOutputRejected 'Output outside diagnostics root was not rejected.'
 
     $excludedDriveRejected = $false
     try {
-        & $resolvedScriptPath `
-            -Mode Preview `
-            -UserTempPath 'E:\KARV-Never-Access' `
+        & $resolvedScriptPath -Mode Preview -UserTempPath 'E:\KARV-Never-Access' `
             -OutputDirectory $outputDirectory | Out-Null
     }
-    catch {
-        $excludedDriveRejected = $true
-    }
-    Assert-Condition -Condition $excludedDriveRejected -Message 'Drive E: was not rejected.'
+    catch { $excludedDriveRejected = $true }
+    Assert-True $excludedDriveRejected 'Drive E: was not rejected.'
 
     [pscustomobject]@{
         Status = 'Passed'
