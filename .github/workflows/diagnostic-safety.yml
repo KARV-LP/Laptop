@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   static-safety:
-    name: PowerShell parse and safety
+    name: PowerShell safety and runtime
     runs-on: windows-latest
     timeout-minutes: 10
 
@@ -28,3 +28,39 @@ jobs:
       - name: Validate documented nested powershell.exe invocation
         shell: cmd
         run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1"
+
+      - name: Execute read-only diagnostic smoke test
+        shell: powershell
+        run: |
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LaptopDiagnostics-Smoke'
+
+          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvReadOnlyDiagnostic.ps1" `
+            -OutputDirectory $outputDirectory `
+            -SkipCacheScan
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Diagnostic smoke test returned a non-zero exit code.'
+          }
+
+          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter '*.json' -File)
+          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter '*.md' -File)
+
+          if ($jsonReports.Count -ne 1) {
+              throw 'Diagnostic smoke test did not create exactly one JSON report.'
+          }
+
+          if ($markdownReports.Count -ne 1) {
+              throw 'Diagnostic smoke test did not create exactly one Markdown report.'
+          }
+
+          $report = Get-Content -LiteralPath $jsonReports[0].FullName -Raw | ConvertFrom-Json
+
+          if ($report.ScriptVersion -ne '1.0.1') {
+              throw 'Unexpected diagnostic script version in smoke-test report.'
+          }
+
+          if (-not $report.Privacy.Sanitized) {
+              throw 'Smoke-test report is not marked as sanitized.'
+          }
+
+          Write-Host 'Diagnostic runtime smoke test passed.'
