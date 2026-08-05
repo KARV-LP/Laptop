@@ -108,17 +108,17 @@ foreach ($pattern in $forbiddenTextPatterns) {
     }
 }
 
-$requiredPrivacyMarkers = @(
-    'ComputerNameCollected = $false',
-    'UserNameCollected     = $false',
-    'SerialCollected       = $false',
-    'NetworkCollected      = $false',
-    'EventMessagesCollected = $false'
+$requiredPrivacyPatterns = @(
+    'ComputerNameCollected\s*=\s*\$false',
+    'UserNameCollected\s*=\s*\$false',
+    'SerialCollected\s*=\s*\$false',
+    'NetworkCollected\s*=\s*\$false',
+    'EventMessagesCollected\s*=\s*\$false'
 )
 
-foreach ($marker in $requiredPrivacyMarkers) {
-    if (-not $source.Contains($marker)) {
-        $violations.Add('Missing privacy marker: ' + $marker)
+foreach ($pattern in $requiredPrivacyPatterns) {
+    if ($source -notmatch $pattern) {
+        $violations.Add('Missing privacy marker pattern: ' + $pattern)
     }
 }
 
