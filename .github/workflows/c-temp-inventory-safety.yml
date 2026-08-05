@@ -1,0 +1,170 @@
+name: C temp inventory safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvCTempInventory.ps1'
+      - 'tests/Test-DiagnosticSafety.ps1'
+      - '.github/workflows/c-temp-inventory-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: PowerShell safety and controlled runtime
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate collector directly
+        shell: powershell
+        run: .\tests\Test-DiagnosticSafety.ps1 -ScriptPath ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1"
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1" -ScriptPath ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1"
+
+      - name: Execute controlled smoke test
+        shell: powershell
+        run: |
+          $sampleRoot = Join-Path $env:RUNNER_TEMP 'KARV-CTemp-Sample'
+          $userTemp = Join-Path $sampleRoot 'UserTemp'
+          $windowsTemp = Join-Path $sampleRoot 'WindowsTemp'
+          $npmCache = Join-Path $sampleRoot 'NpmCache'
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-CTemp-Output'
+
+          [System.IO.Directory]::CreateDirectory($userTemp) | Out-Null
+          [System.IO.Directory]::CreateDirectory($windowsTemp) | Out-Null
+          [System.IO.Directory]::CreateDirectory($npmCache) | Out-Null
+
+          $recentFile = Join-Path $userTemp 'private-recent-sample.tmp'
+          $mediumFile = Join-Path $windowsTemp 'private-medium-sample.tmp'
+          $oldFile = Join-Path $npmCache 'private-old-sample.tmp'
+
+          [System.IO.File]::WriteAllBytes($recentFile, (New-Object byte[] 1024))
+          [System.IO.File]::WriteAllBytes($mediumFile, (New-Object byte[] 2097152))
+
+          $oldStream = [System.IO.File]::OpenWrite($oldFile)
+          try {
+              $oldStream.SetLength(105MB)
+          }
+          finally {
+              $oldStream.Dispose()
+          }
+
+          [System.IO.File]::SetLastWriteTimeUtc($recentFile, [DateTime]::UtcNow.AddDays(-2))
+          [System.IO.File]::SetLastWriteTimeUtc($mediumFile, [DateTime]::UtcNow.AddDays(-20))
+          [System.IO.File]::SetLastWriteTimeUtc($oldFile, [DateTime]::UtcNow.AddDays(-120))
+
+          $targetDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\')
+
+          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1" `
+            -OutputDirectory $outputDirectory `
+            -TargetDrive $targetDrive `
+            -UserTempPath $userTemp `
+            -WindowsTempPath $windowsTemp `
+            -NpmCachePath $npmCache
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'C temp inventory smoke test returned a non-zero exit code.'
+          }
+
+          $jsonReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-c-temp-inventory-*.json' -File)
+          $markdownReports = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-c-temp-inventory-summary-*.md' -File)
+
+          if ($jsonReports.Count -ne 1) {
+              throw 'Smoke test did not create exactly one JSON report.'
+          }
+
+          if ($markdownReports.Count -ne 1) {
+              throw 'Smoke test did not create exactly one Markdown report.'
+          }
+
+          $jsonText = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8
+          $report = $jsonText | ConvertFrom-Json
+
+          if ($report.Collector -ne 'CTempInventory' -or $report.ScriptVersion -ne '1.0.0') {
+              throw 'Unexpected collector identity or version.'
+          }
+
+          if ($report.TargetDrive -ne $targetDrive.ToUpperInvariant()) {
+              throw 'Smoke-test target drive is incorrect.'
+          }
+
+          if (-not $report.Privacy.Sanitized -or -not $report.Privacy.ExcludedDriveE) {
+              throw 'Required privacy or excluded-drive marker is missing.'
+          }
+
+          if ($report.Privacy.FileNamesCollected -ne $false -or $report.Privacy.FullPathsCollected -ne $false) {
+              throw 'File-name or full-path collection is not disabled.'
+          }
+
+          if (@($report.SectionFailures).Count -ne 0) {
+              throw 'Smoke test reported a section failure.'
+          }
+
+          if ($report.TemporarySummary.Files -ne 3) {
+              throw 'Smoke test did not classify exactly three sample files.'
+          }
+
+          $userSummary = @($report.Sources | Where-Object { $_.Name -eq 'UserTemp' })[0]
+          $windowsSummary = @($report.Sources | Where-Object { $_.Name -eq 'WindowsTemp' })[0]
+          $npmSummary = @($report.Sources | Where-Object { $_.Name -eq 'NpmCache' })[0]
+
+          if ($userSummary.AgeBuckets.Days0To7.Files -ne 1 -or $userSummary.SizeBuckets.Under1MB.Files -ne 1) {
+              throw 'Recent small-file classification failed.'
+          }
+
+          if ($windowsSummary.AgeBuckets.Days8To30.Files -ne 1 -or $windowsSummary.SizeBuckets.From1MBTo100MB.Files -ne 1) {
+              throw 'Medium file classification failed.'
+          }
+
+          if ($npmSummary.AgeBuckets.DaysOver90.Files -ne 1 -or $npmSummary.SizeBuckets.Over100MB.Files -ne 1) {
+              throw 'Old large-file classification failed.'
+          }
+
+          if ($jsonText -match 'private-(?:recent|medium|old)-sample') {
+              throw 'Sanitized report contains a sample file name.'
+          }
+
+          if ($jsonText -match [regex]::Escape($sampleRoot)) {
+              throw 'Sanitized report contains a full source path.'
+          }
+
+          $markdown = Get-Content -LiteralPath $markdownReports[0].FullName -Raw -Encoding UTF8
+          if ($markdown -notmatch '# KARV - inventario sanitizado da unidade local e temporarios') {
+              throw 'Markdown summary header is missing.'
+          }
+
+          Write-Host 'Controlled C temp inventory smoke test passed.'
+
+      - name: Confirm permanent E drive rejection
+        shell: powershell
+        run: |
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-CTemp-E-Rejection'
+          $rejected = $false
+
+          try {
+              & ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1" `
+                -OutputDirectory $outputDirectory `
+                -TargetDrive 'E:' `
+                -ErrorAction Stop
+          }
+          catch {
+              if ($_.Exception.Message -notmatch 'permanently excluded') {
+                  throw
+              }
+
+              $rejected = $true
+          }
+
+          if (-not $rejected) {
+              throw 'The collector unexpectedly accepted the permanently excluded drive E:.'
+          }
+
+          Write-Host 'Permanent E drive rejection passed.'
