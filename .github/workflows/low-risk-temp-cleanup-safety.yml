@@ -1,0 +1,190 @@
+name: Low-risk temp cleanup safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/maintenance/Invoke-KarvLowRiskTempCleanup.ps1'
+      - 'tests/Test-DiagnosticSafety.ps1'
+      - '.github/workflows/low-risk-temp-cleanup-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Preview and guarded apply validation
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate script syntax and commands
+        shell: cmd
+        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1" -ScriptPath ".\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1"
+
+      - name: Validate preview leaves all files untouched
+        shell: powershell
+        run: |
+          $sampleRoot = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Preview-Sample'
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Preview-Output'
+          [System.IO.Directory]::CreateDirectory($sampleRoot) | Out-Null
+
+          $files = @{
+            OldTmp = Join-Path $sampleRoot 'private-old.tmp'
+            OldLog = Join-Path $sampleRoot 'private-old.log'
+            OldEtl = Join-Path $sampleRoot 'private-old.etl'
+            OldDmp = Join-Path $sampleRoot 'private-old.dmp'
+            RecentTmp = Join-Path $sampleRoot 'private-recent.tmp'
+            OldBlend = Join-Path $sampleRoot 'private-old.blend'
+            OldGlb = Join-Path $sampleRoot 'private-old.glb'
+          }
+
+          foreach ($path in $files.Values) {
+            [System.IO.File]::WriteAllBytes($path, (New-Object byte[] 2048))
+          }
+
+          foreach ($key in @('OldTmp', 'OldLog', 'OldEtl', 'OldDmp', 'OldBlend', 'OldGlb')) {
+            [System.IO.File]::SetLastWriteTimeUtc($files[$key], [DateTime]::UtcNow.AddDays(-120))
+          }
+          [System.IO.File]::SetLastWriteTimeUtc($files.RecentTmp, [DateTime]::UtcNow.AddDays(-2))
+
+          $targetDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\')
+
+          & powershell.exe -NoProfile -File ".\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1" `
+            -Mode Preview `
+            -OutputDirectory $outputDirectory `
+            -TargetDrive $targetDrive `
+            -UserTempPath $sampleRoot
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Preview returned a non-zero exit code.'
+          }
+
+          foreach ($path in $files.Values) {
+            if (-not [System.IO.File]::Exists($path)) {
+              throw 'Preview modified or removed a sample file.'
+            }
+          }
+
+          $jsonReport = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-low-risk-temp-cleanup-preview-*.json' -File)[0]
+          $jsonText = Get-Content -LiteralPath $jsonReport.FullName -Raw -Encoding UTF8
+          $report = $jsonText | ConvertFrom-Json
+
+          if ($report.Mode -ne 'Preview' -or $report.CleanupExecuted -ne $false) {
+            throw 'Preview safety markers are incorrect.'
+          }
+          if ($report.Summary.CandidateFiles -ne 4 -or $report.Summary.RemovedFiles -ne 0) {
+            throw 'Preview candidate selection is incorrect.'
+          }
+          if ($jsonText -match 'private-(?:old|recent)') {
+            throw 'Preview report contains a file name.'
+          }
+          if ($jsonText -match [regex]::Escape($sampleRoot)) {
+            throw 'Preview report contains the source path.'
+          }
+
+          Write-Host 'Preview safety test passed.'
+
+      - name: Confirm apply is blocked without explicit guards
+        shell: powershell
+        run: |
+          $sampleRoot = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Blocked-Sample'
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Blocked-Output'
+          [System.IO.Directory]::CreateDirectory($sampleRoot) | Out-Null
+          $oldTmp = Join-Path $sampleRoot 'private-old.tmp'
+          [System.IO.File]::WriteAllBytes($oldTmp, (New-Object byte[] 2048))
+          [System.IO.File]::SetLastWriteTimeUtc($oldTmp, [DateTime]::UtcNow.AddDays(-120))
+          $targetDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\')
+
+          $process = Start-Process -FilePath powershell.exe -ArgumentList @(
+            '-NoProfile', '-File', '.\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1',
+            '-Mode', 'Apply',
+            '-OutputDirectory', $outputDirectory,
+            '-TargetDrive', $targetDrive,
+            '-UserTempPath', $sampleRoot
+          ) -Wait -PassThru -NoNewWindow
+
+          if ($process.ExitCode -eq 0) {
+            throw 'Apply unexpectedly ran without explicit guards.'
+          }
+          if (-not [System.IO.File]::Exists($oldTmp)) {
+            throw 'Blocked apply removed a file.'
+          }
+
+          Write-Host 'Apply guard test passed.'
+
+      - name: Validate controlled apply only removes authorized old extensions
+        shell: powershell
+        run: |
+          $sampleRoot = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Apply-Sample'
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-Apply-Output'
+          [System.IO.Directory]::CreateDirectory($sampleRoot) | Out-Null
+
+          $oldTmp = Join-Path $sampleRoot 'private-old.tmp'
+          $oldLog = Join-Path $sampleRoot 'private-old.log'
+          $oldEtl = Join-Path $sampleRoot 'private-old.etl'
+          $oldDmp = Join-Path $sampleRoot 'private-old.dmp'
+          $recentTmp = Join-Path $sampleRoot 'private-recent.tmp'
+          $oldBlend = Join-Path $sampleRoot 'private-old.blend'
+          $oldGlb = Join-Path $sampleRoot 'private-old.glb'
+
+          foreach ($path in @($oldTmp, $oldLog, $oldEtl, $oldDmp, $recentTmp, $oldBlend, $oldGlb)) {
+            [System.IO.File]::WriteAllBytes($path, (New-Object byte[] 2048))
+          }
+          foreach ($path in @($oldTmp, $oldLog, $oldEtl, $oldDmp, $oldBlend, $oldGlb)) {
+            [System.IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddDays(-120))
+          }
+          [System.IO.File]::SetLastWriteTimeUtc($recentTmp, [DateTime]::UtcNow.AddDays(-2))
+
+          $targetDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\')
+
+          & powershell.exe -NoProfile -File ".\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1" `
+            -Mode Apply `
+            -ConfirmationToken 'KARV-LOW-RISK-CLEANUP-AUTHORIZED' `
+            -ApplicationsClosed `
+            -OutputDirectory $outputDirectory `
+            -TargetDrive $targetDrive `
+            -UserTempPath $sampleRoot
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Controlled apply returned a non-zero exit code.'
+          }
+
+          foreach ($path in @($oldTmp, $oldLog, $oldEtl, $oldDmp)) {
+            if ([System.IO.File]::Exists($path)) {
+              throw 'Controlled apply did not remove an authorized old file.'
+            }
+          }
+          foreach ($path in @($recentTmp, $oldBlend, $oldGlb)) {
+            if (-not [System.IO.File]::Exists($path)) {
+              throw 'Controlled apply removed a recent or protected file.'
+            }
+          }
+
+          $jsonReport = @(Get-ChildItem -LiteralPath $outputDirectory -Filter 'karv-low-risk-temp-cleanup-apply-*.json' -File)[0]
+          $report = (Get-Content -LiteralPath $jsonReport.FullName -Raw -Encoding UTF8) | ConvertFrom-Json
+          if ($report.Summary.CandidateFiles -ne 4 -or $report.Summary.RemovedFiles -ne 4 -or $report.Summary.DeleteFailures -ne 0) {
+            throw 'Controlled apply report is incorrect.'
+          }
+
+          Write-Host 'Controlled apply safety test passed.'
+
+      - name: Confirm permanent E drive rejection
+        shell: powershell
+        run: |
+          $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-LowRisk-E-Rejection'
+          $process = Start-Process -FilePath powershell.exe -ArgumentList @(
+            '-NoProfile', '-File', '.\scripts\maintenance\Invoke-KarvLowRiskTempCleanup.ps1',
+            '-Mode', 'Preview',
+            '-OutputDirectory', $outputDirectory,
+            '-TargetDrive', 'E:'
+          ) -Wait -PassThru -NoNewWindow
+
+          if ($process.ExitCode -eq 0) {
+            throw 'The script unexpectedly accepted the permanently excluded drive E:.'
+          }
+
+          Write-Host 'Permanent E drive rejection passed.'
