@@ -100,9 +100,9 @@ foreach ($pattern in $forbiddenTextPatterns) {
 }
 
 $requiredPatterns = @(
-    "\[ValidateSet\('Preview'\)\]",
-    "\$targetDrive\s*=\s*'C:'",
-    "\$excludedDrive\s*=\s*'E:'",
+    '\[ValidateSet\(''Preview''\)\]',
+    '\$targetDrive\s*=\s*''C:''',
+    '\$excludedDrive\s*=\s*''E:''',
     'FileNamesCollected\s*=\s*\$false',
     'FullPathsCollected\s*=\s*\$false',
     'FileContentRead\s*=\s*\$false',
