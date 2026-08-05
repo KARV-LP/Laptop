@@ -1,0 +1,63 @@
+# Relatórios e logs locais
+reports/*
+!reports/.gitkeep
+*.log
+*.etl
+*.evtx
+*.dmp
+*.dump
+
+# Dados de diagnóstico
+system-info*.txt
+system-info*.json
+installed-apps*.csv
+processes*.csv
+services*.csv
+drivers*.csv
+startup*.csv
+smart*.txt
+
+# Credenciais e configuração local
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+credentials*
+secrets*
+
+# PowerShell e temporários
+*.clixml
+*.tmp
+*.temp
+~*
+
+# Editores e sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dependências e builds
+node_modules/
+dist/
+build/
+coverage/
+
+# Arquivos comerciais e 3D
+*.glb
+*.gltf
+*.blend
+*.blend1
+*.3dm
+*.igs
+*.iges
+*.obj
+*.fbx
+*.stl
+*.exr
+*.psd
+*.sbsar
