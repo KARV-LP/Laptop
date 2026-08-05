@@ -21,6 +21,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Parse script and reject unsafe commands
+      - name: Validate direct Windows PowerShell invocation
         shell: powershell
         run: .\tests\Test-DiagnosticSafety.ps1
+
+      - name: Validate documented nested powershell.exe invocation
+        shell: cmd
+        run: powershell.exe -NoProfile -File ".\tests\Test-DiagnosticSafety.ps1"

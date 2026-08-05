@@ -1,11 +1,21 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ScriptPath = (Join-Path $PSScriptRoot '..\scripts\diagnostic\Invoke-KarvReadOnlyDiagnostic.ps1')
+    [string]$ScriptPath
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+    $testScriptFile = $MyInvocation.MyCommand.Path
+    if ([string]::IsNullOrWhiteSpace($testScriptFile)) {
+        throw 'Unable to determine the test script path.'
+    }
+
+    $testScriptDirectory = Split-Path -Parent $testScriptFile
+    $ScriptPath = Join-Path $testScriptDirectory '..\scripts\diagnostic\Invoke-KarvReadOnlyDiagnostic.ps1'
+}
 
 $resolvedPath = (Resolve-Path -LiteralPath $ScriptPath).Path
 $tokens = $null
