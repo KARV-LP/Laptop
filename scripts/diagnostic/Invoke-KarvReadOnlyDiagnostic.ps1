@@ -407,7 +407,7 @@ if (-not $SkipCacheScan) {
 
 $report = [ordered]@{
     SchemaVersion      = '1.0.0'
-    ScriptVersion      = '1.0.0'
+    ScriptVersion      = '1.0.1'
     GeneratedAt        = $generatedAt
     Privacy            = [ordered]@{
         Sanitized             = $true
@@ -439,7 +439,7 @@ $report = [ordered]@{
     HotFixes           = $hotFixes
     Defender           = $defender
     Batteries          = $batteries
-    SectionFailures    = @($script:SectionFailures)
+    SectionFailures    = $script:SectionFailures.ToArray()
 }
 
 $jsonFileName = 'karv-laptop-diagnostic-' + $timestamp + '.json'
@@ -455,7 +455,7 @@ $summaryLines = New-Object System.Collections.Generic.List[string]
 $summaryLines.Add('# Diagnóstico KARV — resumo sanitizado')
 $summaryLines.Add('')
 $summaryLines.Add('- Gerado em: ' + $generatedAt.ToString('yyyy-MM-dd HH:mm:ss'))
-$summaryLines.Add('- Script: 1.0.0')
+$summaryLines.Add('- Script: 1.0.1')
 $summaryLines.Add('- Seções indisponíveis: ' + $script:SectionFailures.Count)
 $summaryLines.Add('- Relatório sem nome do computador, usuário, serial, MAC, IP ou mensagens completas de eventos.')
 $summaryLines.Add('')
