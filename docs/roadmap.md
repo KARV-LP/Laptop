@@ -6,7 +6,7 @@ Construir uma rotina controlada para diagnóstico, estabilidade, manutenção e 
 
 ## Fase 0 — Fundação e governança
 
-**Estado:** em execução
+**Estado:** concluída pela PR #3
 
 - [x] Inicializar o repositório.
 - [x] Definir escopo e limites operacionais.
@@ -14,23 +14,39 @@ Construir uma rotina controlada para diagnóstico, estabilidade, manutenção e 
 - [x] Definir padrão de branches, commits e Pull Requests.
 - [x] Criar inventário preliminar de aplicativos protegidos.
 - [x] Criar estrutura de diretórios.
-- [ ] Revisar e aprovar a PR da Fase 0.
+- [x] Revisar, aprovar e incorporar a PR da Fase 0.
 
 **Saída:** repositório preparado para receber scripts e diagnósticos sem expor dados locais.
 
 ## Fase 1 — Diagnóstico somente leitura
 
+**Estado:** implementação em andamento na Issue #4
+
+### Implementação
+
+- [x] Criar script PowerShell somente leitura.
+- [x] Sanitizar nomes de usuário, computador, caminhos, e-mail, MAC e IP.
+- [x] Excluir serial, UUID, comandos de inicialização e mensagens completas de eventos.
+- [x] Bloquear saída dentro de repositórios Git.
+- [x] Criar validação estática de sintaxe e comandos proibidos.
+- [x] Criar check automático em runner Windows.
+- [x] Documentar execução e compartilhamento seguro.
+- [ ] Revisar e aprovar a PR da implementação.
+
+### Coleta local
+
 - [ ] Identificar versão e build do Windows.
 - [ ] Levantar CPU, RAM, GPU e armazenamento.
-- [ ] Verificar saúde lógica e SMART do SSD quando disponível.
-- [ ] Mapear processos, serviços e itens de inicialização.
+- [ ] Verificar saúde lógica e indicadores do SSD quando disponíveis.
+- [ ] Mapear processos e itens de inicialização.
 - [ ] Levantar aplicativos instalados e versões.
 - [ ] Verificar drivers relevantes.
-- [ ] Coletar eventos críticos e erros recorrentes do Windows.
+- [ ] Coletar resumo agregado de eventos críticos e erros recorrentes.
 - [ ] Mapear caches técnicos e consumo de armazenamento.
-- [ ] Gerar relatório local sanitizável.
+- [ ] Gerar relatório local sanitizado.
+- [ ] Analisar resultados e registrar linha de base.
 
-**Regra:** nenhuma alteração no sistema durante esta fase.
+**Regra:** nenhuma alteração no sistema durante esta fase. A única escrita permitida é a criação dos relatórios locais fora do repositório.
 
 ## Fase 2 — Catálogo de aplicativos críticos
 

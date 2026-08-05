@@ -1,0 +1,26 @@
+name: Diagnostic safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/**'
+      - 'tests/Test-DiagnosticSafety.ps1'
+      - '.github/workflows/diagnostic-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-safety:
+    name: PowerShell parse and safety
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse script and reject unsafe commands
+        shell: powershell
+        run: .\tests\Test-DiagnosticSafety.ps1
