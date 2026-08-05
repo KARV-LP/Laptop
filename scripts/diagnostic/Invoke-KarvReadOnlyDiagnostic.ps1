@@ -1,11 +1,11 @@
 #requires -Version 5.1
 <#+
 .SYNOPSIS
-    Gera uma linha de base técnica sanitizada do laptop KARV.
+    Generates a sanitized technical baseline for the KARV laptop.
 .DESCRIPTION
-    Executa somente consultas de leitura ao Windows. O único efeito local é a
-    criação dos arquivos de relatório no diretório de saída. Não instala,
-    remove, atualiza, corrige ou transmite dados.
+    Runs read-only Windows queries. The only local effect is writing report
+    files to the output directory. It does not install, remove, update, repair,
+    or transmit data.
 #>
 
 [CmdletBinding()]
@@ -39,6 +39,17 @@ function Convert-BytesToGB {
 
     if ($null -eq $Bytes) { return $null }
     return [math]::Round(([double]$Bytes / 1GB), 2)
+}
+
+function Get-OptionalPropertyValue {
+    param(
+        [Parameter(Mandatory = $true)][object]$InputObject,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
 }
 
 function Protect-Text {
@@ -79,7 +90,7 @@ function Get-SafeOutputDirectory {
 
     while ($null -ne $cursor) {
         if (Test-Path -LiteralPath (Join-Path $cursor.FullName '.git')) {
-            throw 'O diretório de saída não pode estar dentro de um repositório Git.'
+            throw 'The output directory cannot be inside a Git repository.'
         }
         $cursor = $cursor.Parent
     }
@@ -124,13 +135,16 @@ function Get-InstalledApplications {
 
     $items = foreach ($registryPath in $registryPaths) {
         Get-ItemProperty -Path $registryPath -ErrorAction SilentlyContinue |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_.DisplayName) } |
             ForEach-Object {
-                [pscustomobject]@{
-                    Name        = Protect-Text $_.DisplayName
-                    Version     = Protect-Text $_.DisplayVersion
-                    Publisher   = Protect-Text $_.Publisher
-                    InstallDate = Protect-Text $_.InstallDate
+                $displayName = Get-OptionalPropertyValue -InputObject $_ -Name 'DisplayName'
+
+                if (-not [string]::IsNullOrWhiteSpace([string]$displayName)) {
+                    [pscustomobject]@{
+                        Name        = Protect-Text $displayName
+                        Version     = Protect-Text (Get-OptionalPropertyValue -InputObject $_ -Name 'DisplayVersion')
+                        Publisher   = Protect-Text (Get-OptionalPropertyValue -InputObject $_ -Name 'Publisher')
+                        InstallDate = Protect-Text (Get-OptionalPropertyValue -InputObject $_ -Name 'InstallDate')
+                    }
                 }
             }
     }
@@ -207,10 +221,10 @@ $batteries = @()
 try {
     $computerSystem = Get-CimInstance Win32_ComputerSystem | ForEach-Object {
         [pscustomobject]@{
-            Manufacturer        = Protect-Text $_.Manufacturer
-            Model               = Protect-Text $_.Model
-            TotalMemoryGB       = Convert-BytesToGB $_.TotalPhysicalMemory
-            DomainRole          = $_.DomainRole
+            Manufacturer  = Protect-Text $_.Manufacturer
+            Model         = Protect-Text $_.Model
+            TotalMemoryGB = Convert-BytesToGB $_.TotalPhysicalMemory
+            DomainRole    = $_.DomainRole
         }
     }
 } catch { Add-SectionFailure -Section 'ComputerSystem' -Exception $_.Exception }
@@ -219,12 +233,12 @@ try {
     $operatingSystem = Get-CimInstance Win32_OperatingSystem | ForEach-Object {
         $uptime = $generatedAt - $_.LastBootUpTime
         [pscustomobject]@{
-            Caption             = Protect-Text $_.Caption
-            Version             = Protect-Text $_.Version
-            BuildNumber         = Protect-Text $_.BuildNumber
-            Architecture        = Protect-Text $_.OSArchitecture
-            LastBootUpTime      = $_.LastBootUpTime
-            UptimeHours         = [math]::Round($uptime.TotalHours, 1)
+            Caption              = Protect-Text $_.Caption
+            Version              = Protect-Text $_.Version
+            BuildNumber          = Protect-Text $_.BuildNumber
+            Architecture         = Protect-Text $_.OSArchitecture
+            LastBootUpTime       = $_.LastBootUpTime
+            UptimeHours          = [math]::Round($uptime.TotalHours, 1)
             FreePhysicalMemoryGB = [math]::Round(([double]$_.FreePhysicalMemory / 1MB), 2)
         }
     }
@@ -233,13 +247,13 @@ try {
 try {
     $processors = @(Get-CimInstance Win32_Processor | ForEach-Object {
         [pscustomobject]@{
-            Name                     = Protect-Text $_.Name
-            Manufacturer             = Protect-Text $_.Manufacturer
-            Cores                    = $_.NumberOfCores
-            LogicalProcessors        = $_.NumberOfLogicalProcessors
-            MaxClockMHz              = $_.MaxClockSpeed
-            CurrentClockMHz          = $_.CurrentClockSpeed
-            LoadPercentage           = $_.LoadPercentage
+            Name              = Protect-Text $_.Name
+            Manufacturer      = Protect-Text $_.Manufacturer
+            Cores             = $_.NumberOfCores
+            LogicalProcessors = $_.NumberOfLogicalProcessors
+            MaxClockMHz       = $_.MaxClockSpeed
+            CurrentClockMHz   = $_.CurrentClockSpeed
+            LoadPercentage    = $_.LoadPercentage
         }
     })
 } catch { Add-SectionFailure -Section 'Processors' -Exception $_.Exception }
@@ -247,10 +261,10 @@ try {
 try {
     $memoryModules = @(Get-CimInstance Win32_PhysicalMemory | ForEach-Object {
         [pscustomobject]@{
-            CapacityGB   = Convert-BytesToGB $_.Capacity
-            SpeedMHz     = $_.Speed
+            CapacityGB    = Convert-BytesToGB $_.Capacity
+            SpeedMHz      = $_.Speed
             ConfiguredMHz = $_.ConfiguredClockSpeed
-            Manufacturer = Protect-Text $_.Manufacturer
+            Manufacturer  = Protect-Text $_.Manufacturer
         }
     })
 } catch { Add-SectionFailure -Section 'MemoryModules' -Exception $_.Exception }
@@ -258,10 +272,10 @@ try {
 try {
     $videoControllers = @(Get-CimInstance Win32_VideoController | ForEach-Object {
         [pscustomobject]@{
-            Name          = Protect-Text $_.Name
-            DriverVersion = Protect-Text $_.DriverVersion
-            DriverDate    = $_.DriverDate
-            AdapterRAMGB  = Convert-BytesToGB $_.AdapterRAM
+            Name           = Protect-Text $_.Name
+            DriverVersion  = Protect-Text $_.DriverVersion
+            DriverDate     = $_.DriverDate
+            AdapterRAMGB   = Convert-BytesToGB $_.AdapterRAM
             VideoProcessor = Protect-Text $_.VideoProcessor
         }
     })
@@ -300,17 +314,17 @@ try {
                 try {
                     $counter = $_ | Get-StorageReliabilityCounter -ErrorAction Stop
                     [pscustomobject]@{
-                        FriendlyName    = Protect-Text $_.FriendlyName
-                        TemperatureC    = $counter.Temperature
-                        WearPercent     = $counter.Wear
-                        PowerOnHours    = $counter.PowerOnHours
-                        ReadErrorsTotal = $counter.ReadErrorsTotal
+                        FriendlyName     = Protect-Text $_.FriendlyName
+                        TemperatureC     = $counter.Temperature
+                        WearPercent      = $counter.Wear
+                        PowerOnHours     = $counter.PowerOnHours
+                        ReadErrorsTotal  = $counter.ReadErrorsTotal
                         WriteErrorsTotal = $counter.WriteErrorsTotal
                     }
                 } catch {
                     [pscustomobject]@{
-                        FriendlyName    = Protect-Text $_.FriendlyName
-                        Status          = 'Unavailable'
+                        FriendlyName = Protect-Text $_.FriendlyName
+                        Status       = 'Unavailable'
                     }
                 }
             })
@@ -324,10 +338,10 @@ try {
         Select-Object -First $TopProcessCount |
         ForEach-Object {
             [pscustomobject]@{
-                Name          = Protect-Text $_.ProcessName
-                Id            = $_.Id
-                CpuSeconds    = if ($null -eq $_.CPU) { 0 } else { [math]::Round($_.CPU, 1) }
-                WorkingSetMB  = [math]::Round(([double]$_.WorkingSet64 / 1MB), 1)
+                Name         = Protect-Text $_.ProcessName
+                Id           = $_.Id
+                CpuSeconds   = if ($null -eq $_.CPU) { 0 } else { [math]::Round($_.CPU, 1) }
+                WorkingSetMB = [math]::Round(([double]$_.WorkingSet64 / 1MB), 1)
             }
         })
 } catch { Add-SectionFailure -Section 'Processes' -Exception $_.Exception }
@@ -406,19 +420,19 @@ if (-not $SkipCacheScan) {
 }
 
 $report = [ordered]@{
-    SchemaVersion      = '1.0.0'
-    ScriptVersion      = '1.0.1'
-    GeneratedAt        = $generatedAt
-    Privacy            = [ordered]@{
-        Sanitized             = $true
-        ComputerNameCollected = $false
-        UserNameCollected     = $false
-        SerialCollected       = $false
-        NetworkCollected      = $false
+    SchemaVersion = '1.0.0'
+    ScriptVersion = '1.0.2'
+    GeneratedAt   = $generatedAt
+    Privacy       = [ordered]@{
+        Sanitized              = $true
+        ComputerNameCollected  = $false
+        UserNameCollected      = $false
+        SerialCollected        = $false
+        NetworkCollected       = $false
         EventMessagesCollected = $false
     }
-    Execution          = [ordered]@{
-        IsAdministrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Execution = [ordered]@{
+        IsAdministrator  = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         EventLookbackDays = $EventLookbackDays
         CacheScanSkipped  = [bool]$SkipCacheScan
     }
@@ -452,48 +466,48 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($jsonPath, $json, $utf8)
 
 $summaryLines = New-Object System.Collections.Generic.List[string]
-$summaryLines.Add('# Diagnóstico KARV — resumo sanitizado')
+$summaryLines.Add('# Diagnostico KARV - resumo sanitizado')
 $summaryLines.Add('')
 $summaryLines.Add('- Gerado em: ' + $generatedAt.ToString('yyyy-MM-dd HH:mm:ss'))
-$summaryLines.Add('- Script: 1.0.1')
-$summaryLines.Add('- Seções indisponíveis: ' + $script:SectionFailures.Count)
-$summaryLines.Add('- Relatório sem nome do computador, usuário, serial, MAC, IP ou mensagens completas de eventos.')
+$summaryLines.Add('- Script: 1.0.2')
+$summaryLines.Add('- Secoes indisponiveis: ' + $script:SectionFailures.Count)
+$summaryLines.Add('- Relatorio sem nome do computador, usuario, serial, MAC, IP ou mensagens completas de eventos.')
 $summaryLines.Add('')
 $summaryLines.Add('## Sistema')
 if ($null -ne $computerSystem) {
     $summaryLines.Add('- Equipamento: ' + (Protect-Text $computerSystem.Manufacturer) + ' ' + (Protect-Text $computerSystem.Model))
-    $summaryLines.Add('- Memória total: ' + $computerSystem.TotalMemoryGB + ' GB')
+    $summaryLines.Add('- Memoria total: ' + $computerSystem.TotalMemoryGB + ' GB')
 }
 if ($null -ne $operatingSystem) {
-    $summaryLines.Add('- Windows: ' + (Protect-Text $operatingSystem.Caption) + ' — build ' + (Protect-Text $operatingSystem.BuildNumber))
+    $summaryLines.Add('- Windows: ' + (Protect-Text $operatingSystem.Caption) + ' - build ' + (Protect-Text $operatingSystem.BuildNumber))
     $summaryLines.Add('- Uptime: ' + $operatingSystem.UptimeHours + ' horas')
-    $summaryLines.Add('- Memória livre na coleta: ' + $operatingSystem.FreePhysicalMemoryGB + ' GB')
+    $summaryLines.Add('- Memoria livre na coleta: ' + $operatingSystem.FreePhysicalMemoryGB + ' GB')
 }
 $summaryLines.Add('')
 $summaryLines.Add('## Componentes')
 foreach ($processor in $processors) {
-    $summaryLines.Add('- CPU: ' + (Protect-Text $processor.Name) + ' — ' + $processor.Cores + ' núcleos / ' + $processor.LogicalProcessors + ' lógicos')
+    $summaryLines.Add('- CPU: ' + (Protect-Text $processor.Name) + ' - ' + $processor.Cores + ' nucleos / ' + $processor.LogicalProcessors + ' logicos')
 }
 foreach ($gpu in $videoControllers) {
-    $summaryLines.Add('- GPU: ' + (Protect-Text $gpu.Name) + ' — driver ' + (Protect-Text $gpu.DriverVersion))
+    $summaryLines.Add('- GPU: ' + (Protect-Text $gpu.Name) + ' - driver ' + (Protect-Text $gpu.DriverVersion))
 }
 $summaryLines.Add('')
 $summaryLines.Add('## Armazenamento')
 foreach ($disk in $logicalDisks) {
-    $summaryLines.Add('- ' + $disk.Drive + ' — ' + $disk.FreeGB + ' GB livres de ' + $disk.SizeGB + ' GB (' + $disk.UsedPercent + '% usado)')
+    $summaryLines.Add('- ' + $disk.Drive + ' - ' + $disk.FreeGB + ' GB livres de ' + $disk.SizeGB + ' GB (' + $disk.UsedPercent + '% usado)')
 }
 foreach ($disk in $physicalDisks) {
-    $summaryLines.Add('- Disco físico: ' + (Protect-Text $disk.FriendlyName) + ' — saúde ' + (Protect-Text $disk.HealthStatus))
+    $summaryLines.Add('- Disco fisico: ' + (Protect-Text $disk.FriendlyName) + ' - saude ' + (Protect-Text $disk.HealthStatus))
 }
 $summaryLines.Add('')
-$summaryLines.Add('## Inventário')
+$summaryLines.Add('## Inventario')
 $summaryLines.Add('- Aplicativos encontrados: ' + $applications.Count)
-$summaryLines.Add('- Itens de inicialização: ' + $startupItems.Count)
+$summaryLines.Add('- Itens de inicializacao: ' + $startupItems.Count)
 $summaryLines.Add('- Drivers selecionados: ' + $drivers.Count)
-$summaryLines.Add('- Grupos de eventos críticos/erro: ' + $eventSummary.Count)
+$summaryLines.Add('- Grupos de eventos criticos/erro: ' + $eventSummary.Count)
 $summaryLines.Add('')
-$summaryLines.Add('## Próxima ação')
-$summaryLines.Add('Revisar localmente o JSON e compartilhar somente os dados sanitizados solicitados para análise.')
+$summaryLines.Add('## Proxima acao')
+$summaryLines.Add('Revisar localmente o JSON e compartilhar somente os dados sanitizados solicitados para analise.')
 
 $safeSummary = Protect-Text ($summaryLines -join [Environment]::NewLine)
 [System.IO.File]::WriteAllText($markdownPath, $safeSummary, $utf8)
