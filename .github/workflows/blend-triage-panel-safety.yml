@@ -1,0 +1,71 @@
+name: Blender local triage panel safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnostic/Invoke-KarvBlendTriagePanel.ps1'
+      - 'tests/Test-BlendTriagePanelSafety.ps1'
+      - 'docs/fase-2f-blend-local-triage.md'
+      - '.github/workflows/blend-triage-panel-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Static local-only panel and sanitized summary
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate with Windows PowerShell
+        shell: powershell
+        run: |
+          try {
+              .\tests\Test-BlendTriagePanelSafety.ps1 `
+                -ScriptPath '.\scripts\diagnostic\Invoke-KarvBlendTriagePanel.ps1'
+          }
+          catch {
+              Write-Host 'Exception type:' $_.Exception.GetType().FullName
+              Write-Host 'Exception message:' $_.Exception.Message
+              Write-Host 'Position:' $_.InvocationInfo.PositionMessage
+              Write-Host 'Script stack:' $_.ScriptStackTrace
+              throw
+          }
+
+      - name: Validate documented PowerShell 5.1 invocation
+        shell: cmd
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File ".\tests\Test-BlendTriagePanelSafety.ps1"
+          -ScriptPath ".\scripts\diagnostic\Invoke-KarvBlendTriagePanel.ps1"
+
+      - name: Confirm previous phase scripts are unchanged
+        if: github.event_name == 'pull_request'
+        shell: powershell
+        run: |
+          $changed = @(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          $protected = @(
+              'scripts/diagnostic/Invoke-KarvBlendUserTempClassifier.ps1',
+              'scripts/diagnostic/Invoke-KarvBlendAutosaveReview.ps1',
+              'tests/Test-BlendUserTempClassifierSafety.ps1',
+              'tests/Test-BlendAutosaveReviewSafety.ps1'
+          )
+          $violations = @($changed | Where-Object { $protected -contains $_ })
+          if ($violations.Count -ne 0) {
+              throw ('Protected Fase 2D/2E files were modified: ' + ($violations -join '; '))
+          }
+          Write-Host 'Protected Fase 2D and 2E files remained unchanged.'
+
+      - name: Confirm repository remains unchanged
+        shell: powershell
+        run: |
+          $changes = @(git status --porcelain)
+          if ($changes.Count -ne 0) {
+              throw ('Safety tests changed tracked repository files: ' + ($changes -join '; '))
+          }
+          Write-Host 'Repository remained unchanged after safety tests.'
