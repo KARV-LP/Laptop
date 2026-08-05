@@ -147,12 +147,23 @@ jobs:
         shell: powershell
         run: |
           $outputDirectory = Join-Path $env:RUNNER_TEMP 'KARV-CTemp-E-Rejection'
+          $rejected = $false
 
-          & powershell.exe -NoProfile -File ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1" `
-            -OutputDirectory $outputDirectory `
-            -TargetDrive 'E:'
+          try {
+              & ".\scripts\diagnostic\Invoke-KarvCTempInventory.ps1" `
+                -OutputDirectory $outputDirectory `
+                -TargetDrive 'E:' `
+                -ErrorAction Stop
+          }
+          catch {
+              if ($_.Exception.Message -notmatch 'permanently excluded') {
+                  throw
+              }
 
-          if ($LASTEXITCODE -eq 0) {
+              $rejected = $true
+          }
+
+          if (-not $rejected) {
               throw 'The collector unexpectedly accepted the permanently excluded drive E:.'
           }
 
