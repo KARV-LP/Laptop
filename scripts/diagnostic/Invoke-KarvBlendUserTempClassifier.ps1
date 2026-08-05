@@ -418,7 +418,7 @@ $report = [pscustomobject]@{
         DirectoryReparsePointsSkipped = $skippedDirectoryReparsePoints
     }
     Errors          = $sanitizedErrors
-    SectionFailures = @($sectionFailures)
+    SectionFailures = $sectionFailures.ToArray()
 }
 
 $timestamp = $nowUtc.ToString('yyyyMMdd-HHmmss')
