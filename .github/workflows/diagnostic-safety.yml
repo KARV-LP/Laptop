@@ -77,8 +77,11 @@ jobs:
               throw 'Markdown summary header is missing or incorrectly encoded.'
           }
 
-          if ($markdown -match 'Ã|Â|â€') {
-              throw 'Markdown summary contains mojibake markers.'
+          $mojibakeMarkers = @([char]0x00C3, [char]0x00C2, [char]0x00E2)
+          foreach ($marker in $mojibakeMarkers) {
+              if ($markdown.IndexOf([string]$marker, [System.StringComparison]::Ordinal) -ge 0) {
+                  throw 'Markdown summary contains a mojibake marker.'
+              }
           }
 
           Write-Host 'Diagnostic runtime smoke test passed.'
