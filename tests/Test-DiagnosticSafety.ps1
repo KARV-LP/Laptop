@@ -113,13 +113,18 @@ $requiredPrivacyPatterns = @(
     'UserNameCollected\s*=\s*\$false',
     'SerialCollected\s*=\s*\$false',
     'NetworkCollected\s*=\s*\$false',
-    'EventMessagesCollected\s*=\s*\$false'
+    'EventMessagesCollected\s*=\s*\$false',
+    'SidCollected\s*=\s*\$false'
 )
 
 foreach ($pattern in $requiredPrivacyPatterns) {
     if ($source -notmatch $pattern) {
         $violations.Add('Missing privacy marker pattern: ' + $pattern)
     }
+}
+
+if ($source -notmatch "'<SID>'") {
+    $violations.Add('Missing SID sanitization marker.')
 }
 
 if ($violations.Count -gt 0) {

@@ -53,9 +53,10 @@ jobs:
               throw 'Diagnostic smoke test did not create exactly one Markdown report.'
           }
 
-          $report = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          $jsonText = Get-Content -LiteralPath $jsonReports[0].FullName -Raw -Encoding UTF8
+          $report = $jsonText | ConvertFrom-Json
 
-          if ($report.ScriptVersion -ne '1.0.2') {
+          if ($report.ScriptVersion -ne '1.0.3') {
               throw 'Unexpected diagnostic script version in smoke-test report.'
           }
 
@@ -63,13 +64,28 @@ jobs:
               throw 'Smoke-test report is not marked as sanitized.'
           }
 
-          $applicationFailures = @($report.SectionFailures | Where-Object { $_.Section -eq 'Applications' })
-          if ($applicationFailures.Count -gt 0) {
-              throw 'Applications section failed during the diagnostic smoke test.'
+          if ($report.Privacy.SidCollected -ne $false) {
+              throw 'Smoke-test report does not explicitly disable SID collection.'
+          }
+
+          if (@($report.SectionFailures).Count -ne 0) {
+              throw 'Diagnostic smoke test reported unavailable sections.'
           }
 
           if (@($report.Applications).Count -lt 1) {
               throw 'Applications inventory is unexpectedly empty.'
+          }
+
+          if ($jsonText -match '\bS-1-\d+(?:-\d+)+\b') {
+              throw 'Diagnostic report contains an unsanitized Windows SID.'
+          }
+
+          $redactedApplicationVersions = @($report.Applications | Where-Object {
+              ([string]$_.Name).Contains('<IP>') -or
+              ([string]$_.Version).Contains('<IP>')
+          })
+          if ($redactedApplicationVersions.Count -gt 0) {
+              throw 'Application names or versions were incorrectly replaced by the IP marker.'
           }
 
           $markdown = Get-Content -LiteralPath $markdownReports[0].FullName -Raw -Encoding UTF8
